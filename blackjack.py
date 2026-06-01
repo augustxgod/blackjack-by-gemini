@@ -392,9 +392,57 @@ class Game:
             "current_player_id": self.player_order[self.current_player_idx] if self.current_player_idx < len(self.player_order) else None
         }
 
+
+class RouletteGame:
+    def __init__(self, server):
+        self.server = server
+        self.bets = {} # {pid: {"color": "red", "amount": 10}}
+        self.last_result = None
+
+    def place_bet(self, pid, amount, color):
+        if pid not in self.server.global_players: return
+        player_balance = self.server.global_players[pid]["balance"]
+
+        if amount > 0 and player_balance >= amount:
+            self.server.global_players[pid]["balance"] -= amount
+            self.bets[pid] = {"color": color, "amount": amount}
+
+    def spin(self):
+        # 18 red, 18 black, 1 green (0)
+        number = random.randint(0, 36)
+        if number == 0:
+            result_color = "green"
+        elif number in [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]:
+            result_color = "red"
+        else:
+            result_color = "black"
+
+        self.last_result = {"number": number, "color": result_color}
+
+        # Payouts
+        for pid, bet in self.bets.items():
+            if pid not in self.server.global_players: continue
+
+            if bet["color"] == result_color:
+                if result_color == "green":
+                    winnings = bet["amount"] * 35 # High payout for 0
+                else:
+                    winnings = bet["amount"] * 2
+                self.server.global_players[pid]["balance"] += winnings
+
+        self.bets = {} # Clear bets after spin
+
+    def get_state(self):
+        return {
+            "state": "roulette",
+            "last_result": self.last_result,
+            "active_bets": {pid: bet for pid, bet in self.bets.items()}
+        }
+
 # ==========================================
 # NETWORK
 # ==========================================
+
 
 class Server:
     def __init__(self, host='0.0.0.0'):
@@ -403,8 +451,13 @@ class Server:
         self.server.bind((self.host, HOST_PORT))
         self.server.listen()
 
-        self.game = Game()
-        self.clients = {}
+        self.global_players = {} # {pid: {"name": name, "balance": 1000, "room": "lobby"}}
+        self.blackjack_game = Game()
+        self.blackjack_game.server = self
+        self.roulette_game = RouletteGame(self)
+        # self.roulette_game = RouletteGame(self) # to be implemented
+
+        self.clients = {} # {client_socket: pid}
 
     def start(self):
         threading.Thread(target=self.accept_clients, daemon=True).start()
@@ -415,11 +468,30 @@ class Server:
             threading.Thread(target=self.handle_client, args=(client,), daemon=True).start()
 
     def broadcast_state(self):
-        state = self.game.get_state()
-        data = json.dumps({"type": "state", "data": state}).encode('utf-8')
-        for client in self.clients:
+        # We broadcast the blackjack state to all clients in blackjack room,
+        # and a general lobby state to lobby clients
+        bj_state = self.blackjack_game.get_state()
+
+        # Override the players list in bj_state to use global balance
+        for pid in bj_state["players"]:
+            if pid in self.global_players:
+                bj_state["players"][pid]["balance"] = self.global_players[pid]["balance"]
+
+        for client, pid in list(self.clients.items()):
             try:
-                client.sendall(data + b'\n')
+                if pid not in self.global_players: continue
+                room = self.global_players[pid]["room"]
+
+                if room == "blackjack":
+                    data = json.dumps({"type": "state", "data": bj_state}).encode('utf-8')
+                    client.sendall(data + b"\n")
+                elif room == "lobby":
+                    lobby_state = {
+                        "state": "lobby",
+                        "players": {pid: {"name": self.global_players[pid]["name"], "balance": self.global_players[pid]["balance"]}}
+                    }
+                    data = json.dumps({"type": "state", "data": lobby_state}).encode('utf-8')
+                    client.sendall(data + b"\n")
             except:
                 pass
 
@@ -431,7 +503,12 @@ class Server:
                 player_id = msg["player_id"]
                 name = msg["name"]
                 self.clients[client] = player_id
-                self.game.add_player(player_id, name)
+
+                # Register globally if new
+                if player_id not in self.global_players:
+                    self.global_players[player_id] = {"name": name, "balance": 1000, "room": "lobby"}
+
+                self.global_players[player_id]["room"] = "lobby"
                 self.broadcast_state()
 
             while True:
@@ -446,32 +523,150 @@ class Server:
                     if msg["type"] == "action":
                         action = msg["action"]
                         pid = msg["player_id"]
-                        if action == "bet":
-                            self.game.place_bet(pid, msg["amount"])
-                        elif action == "hit":
-                            self.game.hit(pid)
-                        elif action == "stand":
-                            self.game.stand(pid)
-                        elif action == "double":
-                            self.game.double_down(pid)
-                        elif action == "split":
-                            self.game.split(pid)
-                        elif action == "insurance":
-                            self.game.buy_insurance(pid)
-                        elif action == "start_round":
-                            self.game.start_betting_phase()
+
+                        if action == "join_room":
+                            room_name = msg.get("room")
+                            self.global_players[pid]["room"] = room_name
+                            if room_name == "blackjack":
+                                self.blackjack_game.add_player(pid, self.global_players[pid]["name"])
+                                # update local game balance
+                                self.blackjack_game.players[pid].balance = self.global_players[pid]["balance"]
+
+                        elif action == "leave_room":
+                            room_name = self.global_players[pid]["room"]
+                            if room_name == "blackjack":
+                                self.blackjack_game.remove_player(pid)
+                            self.global_players[pid]["room"] = "lobby"
+
+                        # Route Blackjack actions
+                        elif self.global_players[pid]["room"] == "blackjack":
+                            if action == "bet":
+                                self.blackjack_game.place_bet(pid, msg["amount"])
+                                self.global_players[pid]["balance"] = self.blackjack_game.players[pid].balance
+                            elif action == "hit":
+                                self.blackjack_game.hit(pid)
+                            elif action == "stand":
+                                self.blackjack_game.stand(pid)
+                            elif action == "double":
+                                self.blackjack_game.double_down(pid)
+                                self.global_players[pid]["balance"] = self.blackjack_game.players[pid].balance
+                            elif action == "split":
+                                self.blackjack_game.split(pid)
+                                self.global_players[pid]["balance"] = self.blackjack_game.players[pid].balance
+                            elif action == "insurance":
+                                self.blackjack_game.buy_insurance(pid)
+                                self.global_players[pid]["balance"] = self.blackjack_game.players[pid].balance
+                            elif action == "start_round":
+                                self.blackjack_game.start_betting_phase()
+
+
+                        elif self.global_players[pid]["room"] == "roulette":
+                            if action == "r_bet":
+                                self.roulette_game.place_bet(pid, msg.get("amount", 10), msg.get("color"))
+                            elif action == "r_spin":
+                                self.roulette_game.spin()
+
+                            # broadcast roulette state is handled below
+
+                            # Sync balances back to global from game
+                            for p in self.blackjack_game.players.values():
+                                self.global_players[p.player_id]["balance"] = p.balance
 
                         self.broadcast_state()
-        except:
-            pass
+        except Exception as e:
+            print("Client error:", e)
         finally:
             if client in self.clients:
                 pid = self.clients[client]
-                self.game.remove_player(pid)
+                if pid in self.global_players:
+                    if self.global_players[pid]["room"] == "blackjack":
+                        self.blackjack_game.remove_player(pid)
+                    self.global_players[pid]["room"] = "disconnected"
                 del self.clients[client]
                 self.broadcast_state()
             client.close()
 
+
+
+class LocalClient:
+    def __init__(self, player_id, name):
+        self.player_id = player_id
+        self.name = name
+        self.server = Server()
+        self.on_state_update = None
+        self.room = "lobby"
+
+        self.server.global_players[player_id] = {"name": name, "balance": 1000, "room": "lobby"}
+        self.server.clients["local_socket_mock"] = player_id
+
+    def connect(self):
+        self._trigger_update()
+
+    def _trigger_update(self):
+        if not self.on_state_update: return
+
+        if self.room == "lobby":
+            state = {
+                "state": "lobby",
+                "players": {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
+            }
+        elif self.room == "blackjack":
+            state = self.server.blackjack_game.get_state()
+            state["players"][self.player_id]["balance"] = self.server.global_players[self.player_id]["balance"]
+        elif self.room == "roulette":
+            state = self.server.roulette_game.get_state()
+            state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
+        else:
+            state = {"state": "unknown", "players": {}}
+
+        self.on_state_update(state)
+
+    def send_action(self, action, **kwargs):
+        pid = self.player_id
+
+        if action == "join_room":
+            self.room = kwargs.get("room")
+            self.server.global_players[pid]["room"] = self.room
+            if self.room == "blackjack":
+                self.server.blackjack_game.add_player(pid, self.name)
+                self.server.blackjack_game.players[pid].balance = self.server.global_players[pid]["balance"]
+
+        elif action == "leave_room":
+            if self.room == "blackjack":
+                self.server.blackjack_game.remove_player(pid)
+            self.room = "lobby"
+            self.server.global_players[pid]["room"] = "lobby"
+
+        elif self.room == "blackjack":
+            game = self.server.blackjack_game
+            if action == "bet":
+                game.place_bet(pid, kwargs.get("amount", 0))
+            elif action == "hit":
+                game.hit(pid)
+            elif action == "stand":
+                game.stand(pid)
+            elif action == "double":
+                game.double_down(pid)
+            elif action == "split":
+                game.split(pid)
+            elif action == "insurance":
+                game.buy_insurance(pid)
+            elif action == "start_round":
+                game.start_betting_phase()
+
+            for p in game.players.values():
+                self.server.global_players[p.player_id]["balance"] = p.balance
+
+        elif self.room == "roulette":
+            game = self.server.roulette_game
+            if action == "r_bet":
+                amount = int(kwargs.get("amount", 10))
+                color = kwargs.get("color")
+                game.place_bet(pid, amount, color)
+            elif action == "r_spin":
+                game.spin()
+
+        self._trigger_update()
 class Client:
     def __init__(self, host, player_id, name):
         self.host = host
@@ -483,7 +678,7 @@ class Client:
     def connect(self):
         self.client.connect((self.host, HOST_PORT))
         join_msg = json.dumps({"type": "join", "player_id": self.player_id, "name": self.name})
-        self.client.sendall(join_msg.encode('utf-8') + b'\n')
+        self.client.sendall(join_msg.encode('utf-8') + b'\\n')
         threading.Thread(target=self.receive_loop, daemon=True).start()
 
     def receive_loop(self):
@@ -505,18 +700,158 @@ class Client:
     def send_action(self, action, **kwargs):
         msg = {"type": "action", "action": action, "player_id": self.player_id}
         msg.update(kwargs)
-        self.client.sendall(json.dumps(msg).encode('utf-8') + b'\n')
+        self.client.sendall(json.dumps(msg).encode('utf-8') + b'\\n')
+
 
 class LocalClient:
     def __init__(self, player_id, name):
         self.player_id = player_id
         self.name = name
-        self.game = Game()
+        self.server = Server()
         self.on_state_update = None
+        self.room = "lobby"
+
+        self.server.global_players[player_id] = {"name": name, "balance": 1000, "room": "lobby"}
+        self.server.clients["local_socket_mock"] = player_id
 
     def connect(self):
-        self.game.add_player(self.player_id, self.name)
         self._trigger_update()
+
+    def _trigger_update(self):
+        if not self.on_state_update: return
+
+        if self.room == "lobby":
+            state = {
+                "state": "lobby",
+                "players": {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
+            }
+        elif self.room == "blackjack":
+            state = self.server.blackjack_game.get_state()
+            state["players"][self.player_id]["balance"] = self.server.global_players[self.player_id]["balance"]
+        elif self.room == "roulette":
+            state = self.server.roulette_game.get_state()
+            state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
+        else:
+            state = {"state": "unknown", "players": {}}
+
+        self.on_state_update(state)
+
+    def send_action(self, action, **kwargs):
+        pid = self.player_id
+
+        if action == "join_room":
+            self.room = kwargs.get("room")
+            self.server.global_players[pid]["room"] = self.room
+            if self.room == "blackjack":
+                self.server.blackjack_game.add_player(pid, self.name)
+                self.server.blackjack_game.players[pid].balance = self.server.global_players[pid]["balance"]
+
+        elif action == "leave_room":
+            if self.room == "blackjack":
+                self.server.blackjack_game.remove_player(pid)
+            self.room = "lobby"
+            self.server.global_players[pid]["room"] = "lobby"
+
+        elif self.room == "blackjack":
+            game = self.server.blackjack_game
+            if action == "bet":
+                game.place_bet(pid, kwargs.get("amount", 0))
+            elif action == "hit":
+                game.hit(pid)
+            elif action == "stand":
+                game.stand(pid)
+            elif action == "double":
+                game.double_down(pid)
+            elif action == "split":
+                game.split(pid)
+            elif action == "insurance":
+                game.buy_insurance(pid)
+            elif action == "start_round":
+                game.start_betting_phase()
+
+            for p in game.players.values():
+                self.server.global_players[p.player_id]["balance"] = p.balance
+
+        elif self.room == "roulette":
+            game = self.server.roulette_game
+            if action == "r_bet":
+                amount = int(kwargs.get("amount", 10))
+                color = kwargs.get("color")
+                game.place_bet(pid, amount, color)
+            elif action == "r_spin":
+                game.spin()
+
+        self._trigger_update()
+
+    def _trigger_update(self):
+        if not self.on_state_update: return
+
+        if self.room == "lobby":
+            state = {
+                "state": "lobby",
+                "players": {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
+            }
+        elif self.room == "blackjack":
+            state = self.server.blackjack_game.get_state()
+            state["players"][self.player_id]["balance"] = self.server.global_players[self.player_id]["balance"]
+
+        elif self.room == "roulette":
+            state = self.server.roulette_game.get_state()
+            state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
+
+        else:
+            state = {"state": "unknown", "players": {}}
+
+        self.on_state_update(state)
+
+    def send_action(self, action, **kwargs):
+        pid = self.player_id
+
+        if action == "join_room":
+            self.room = kwargs.get("room")
+            self.server.global_players[pid]["room"] = self.room
+            if self.room == "blackjack":
+                self.server.blackjack_game.add_player(pid, self.name)
+                self.server.blackjack_game.players[pid].balance = self.server.global_players[pid]["balance"]
+
+        elif action == "leave_room":
+            if self.room == "blackjack":
+                self.server.blackjack_game.remove_player(pid)
+            self.room = "lobby"
+            self.server.global_players[pid]["room"] = "lobby"
+
+        elif self.room == "blackjack":
+            game = self.server.blackjack_game
+            if action == "bet":
+                game.place_bet(pid, kwargs.get("amount", 0))
+            elif action == "hit":
+                game.hit(pid)
+            elif action == "stand":
+                game.stand(pid)
+            elif action == "double":
+                game.double_down(pid)
+            elif action == "split":
+                game.split(pid)
+            elif action == "insurance":
+                game.buy_insurance(pid)
+            elif action == "start_round":
+                game.start_betting_phase()
+
+            for p in game.players.values():
+                self.server.global_players[p.player_id]["balance"] = p.balance
+
+
+        elif self.room == "roulette":
+            game = self.server.roulette_game
+            if action == "r_bet":
+                amount = int(kwargs.get("amount", 10))
+                color = kwargs.get("color")
+                game.place_bet(pid, amount, color)
+            elif action == "r_spin":
+                game.spin()
+
+        self._trigger_update()
+
 
     def _trigger_update(self):
         if self.on_state_update:
@@ -539,6 +874,16 @@ class LocalClient:
             self.game.buy_insurance(pid)
         elif action == "start_round":
             self.game.start_betting_phase()
+
+        elif self.room == "roulette":
+            game = self.server.roulette_game
+            if action == "r_bet":
+                amount = int(kwargs.get("amount", 10))
+                color = kwargs.get("color")
+                game.place_bet(pid, amount, color)
+            elif action == "r_spin":
+                game.spin()
+
         self._trigger_update()
 
 # ==========================================
@@ -548,7 +893,7 @@ class LocalClient:
 class BlackjackGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Blackjack")
+        self.root.title("Virtual Casino")
         self.root.geometry("1000x700")
         self.root.configure(bg="#006600")
 
@@ -556,6 +901,7 @@ class BlackjackGUI:
         self.client = None
         self.server = None
         self.game_state = None
+        self.current_view = "lobby"
 
         self.setup_start_screen()
 
@@ -566,7 +912,7 @@ class BlackjackGUI:
         frame = tk.Frame(self.root, bg="#006600")
         frame.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
-        tk.Label(frame, text="Blackjack", font=("Arial", 36, "bold"), bg="#006600", fg="white").pack(pady=20)
+        tk.Label(frame, text="Virtual Casino", font=("Arial", 36, "bold"), bg="#006600", fg="white").pack(pady=20)
 
         tk.Label(frame, text="Your Name:", font=("Arial", 14), bg="#006600", fg="white").pack()
         self.name_entry = tk.Entry(frame, font=("Arial", 14))
@@ -591,7 +937,7 @@ class BlackjackGUI:
         self.client = LocalClient(self.player_id, name)
         self.client.on_state_update = self.on_state_update
         self.client.connect()
-        self.setup_game_screen()
+        self.setup_lobby_screen()
 
     def host_game(self):
         self.server = Server()
@@ -612,7 +958,79 @@ class BlackjackGUI:
         except Exception as e:
             messagebox.showerror("Connection Error", f"Failed to connect to {ip}\n{e}")
 
+
+    def setup_lobby_screen(self):
+        self.current_view = "lobby"
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+        self.lobby_frame = tk.Frame(self.root, bg="#1a1a1a")
+        self.lobby_frame.pack(expand=True, fill=tk.BOTH)
+
+        top_bar = tk.Frame(self.lobby_frame, bg="#333")
+        top_bar.pack(fill=tk.X, pady=0)
+
+        self.lobby_balance_label = tk.Label(top_bar, text="Balance: Loading...", fg="gold", bg="#333", font=("Arial", 16, "bold"))
+        self.lobby_balance_label.pack(side=tk.RIGHT, padx=20, pady=10)
+
+        tk.Label(self.lobby_frame, text="Select a Game", font=("Arial", 32, "bold"), fg="white", bg="#1a1a1a").pack(pady=50)
+
+        games_frame = tk.Frame(self.lobby_frame, bg="#1a1a1a")
+        games_frame.pack()
+
+        tk.Button(games_frame, text="Blackjack", font=("Arial", 20), bg="#006600", fg="white", width=15, height=3, command=self.join_blackjack).pack(side=tk.LEFT, padx=20)
+        tk.Button(games_frame, text="Roulette", font=("Arial", 20), bg="#660000", fg="white", width=15, height=3, command=self.join_roulette).pack(side=tk.LEFT, padx=20)
+
+    def join_blackjack(self):
+        self.client.send_action("join_room", room="blackjack")
+        self.current_view = "blackjack"
+        self.setup_game_screen()
+
+    def join_roulette(self):
+        self.client.send_action("join_room", room="roulette")
+        self.current_view = "roulette"
+        self.setup_roulette_screen()
+
+    def setup_roulette_screen(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+        self.r_frame = tk.Frame(self.root, bg="#005500")
+        self.r_frame.pack(expand=True, fill=tk.BOTH)
+
+        top_bar = tk.Frame(self.r_frame, bg="#333")
+        top_bar.pack(fill=tk.X)
+        tk.Button(top_bar, text="< Back to Lobby", command=self.leave_room, bg="#333", fg="white", font=("Arial", 12)).pack(side=tk.LEFT, padx=10, pady=5)
+        self.r_balance_label = tk.Label(top_bar, text="Balance: $", fg="gold", bg="#333", font=("Arial", 14, "bold"))
+        self.r_balance_label.pack(side=tk.RIGHT, padx=20)
+
+        self.r_canvas = tk.Canvas(self.r_frame, bg="#005500", width=1000, height=400, highlightthickness=0)
+        self.r_canvas.pack(pady=20)
+
+        # Draw placeholder roulette wheel
+        self.r_canvas.create_oval(350, 50, 650, 350, outline="#b8860b", width=10, fill="#1a1a1a")
+        self.r_canvas.create_text(500, 200, text="Roulette Wheel", fill="white", font=("Arial", 20, "bold"))
+
+        bottom_frame = tk.Frame(self.r_frame, bg="#005500")
+        bottom_frame.pack(fill=tk.X, pady=20)
+
+        tk.Label(bottom_frame, text="Bet Amount:", bg="#005500", fg="white", font=("Arial", 14)).pack(side=tk.LEFT, padx=10)
+        self.r_bet_entry = tk.Entry(bottom_frame, width=10, font=("Arial", 14))
+        self.r_bet_entry.pack(side=tk.LEFT, padx=10)
+        self.r_bet_entry.insert(0, "10")
+
+        tk.Button(bottom_frame, text="Bet Red", bg="red", fg="white", font=("Arial", 12), command=lambda: self.client.send_action("r_bet", color="red", amount=int(self.r_bet_entry.get() or 0))).pack(side=tk.LEFT, padx=5)
+        tk.Button(bottom_frame, text="Bet Black", bg="black", fg="white", font=("Arial", 12), command=lambda: self.client.send_action("r_bet", color="black", amount=int(self.r_bet_entry.get() or 0))).pack(side=tk.LEFT, padx=5)
+        tk.Button(bottom_frame, text="Bet Green", bg="green", fg="white", font=("Arial", 12), command=lambda: self.client.send_action("r_bet", color="green", amount=int(self.r_bet_entry.get() or 0))).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(bottom_frame, text="Spin!", bg="gold", fg="black", font=("Arial", 14, "bold"), command=lambda: self.client.send_action("r_spin")).pack(side=tk.RIGHT, padx=20)
+
+    def leave_room(self):
+        self.client.send_action("leave_room")
+        self.setup_lobby_screen()
+
     def on_state_update(self, state):
+
         self.game_state = state
         self.root.after(0, self.update_ui)
 
@@ -622,6 +1040,8 @@ class BlackjackGUI:
 
         self.top_frame = tk.Frame(self.root, bg="#006600")
         self.top_frame.pack(side=tk.TOP, fill=tk.X, pady=10)
+
+        tk.Button(self.top_frame, text="< Back to Lobby", command=self.leave_room, bg="#333", fg="white", font=("Arial", 12)).pack(side=tk.LEFT, padx=10)
 
         self.canvas = tk.Canvas(self.root, bg="#006600", width=1000, height=500, highlightthickness=0)
         self.canvas.pack(expand=True, fill=tk.BOTH)
@@ -736,14 +1156,46 @@ class BlackjackGUI:
             self.canvas.create_text(x+width-12, y+height-30, text=card_dict["suit"], fill=color, font=("Arial", 12))
             self.canvas.create_text(x+width-12, y+height-15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"))
 
+
     def update_ui(self):
         if not self.game_state: return
+
+        state = self.game_state["state"]
+        players = self.game_state["players"]
+        me = players.get(self.player_id)
+
+        if self.current_view == "lobby":
+            if me and hasattr(self, 'lobby_balance_label'):
+                self.lobby_balance_label.config(text=f"Balance: ${me['balance']}")
+            return
+
+
+        if self.current_view == "roulette":
+            if me and hasattr(self, 'r_balance_label'):
+                self.r_balance_label.config(text=f"Balance: ${me['balance']}")
+
+            # Draw roulette specific state
+            self.r_canvas.delete("result_text")
+            if state.get("last_result"):
+                res = state["last_result"]
+                self.r_canvas.create_text(500, 250, text=f"Result: {res['number']} {res['color'].upper()}", fill=res['color'], font=("Arial", 24, "bold"), tags="result_text")
+
+            # Show active bet
+            if "active_bets" in state and self.player_id in state["active_bets"]:
+                bet = state["active_bets"][self.player_id]
+                self.r_canvas.create_text(500, 300, text=f"Active Bet: ${bet['amount']} on {bet['color']}", fill="white", font=("Arial", 16), tags="result_text")
+
+            return
+
+        if self.current_view != "blackjack":
+            return
 
         self.canvas.delete("all")
         self.draw_table()
 
         for widget in self.bottom_frame.winfo_children():
             widget.pack_forget()
+
 
         state = self.game_state["state"]
         players = self.game_state["players"]
