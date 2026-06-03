@@ -706,6 +706,7 @@ class BlackjackGUI:
         self.server = None
         self.game_state = None
         self.current_view = "lobby"
+        self.active_chip = 10 # Default chip selection
 
         self.setup_start_screen()
 
@@ -814,17 +815,71 @@ class BlackjackGUI:
         bottom_frame = tk.Frame(self.r_frame, bg="#005500")
         bottom_frame.pack(fill=tk.X, pady=10)
 
-        tk.Label(bottom_frame, text="Bet Amount:", bg="#005500", fg="white", font=("Arial", 14)).pack(side=tk.LEFT, padx=10)
-        self.r_bet_entry = tk.Entry(bottom_frame, width=10, font=("Arial", 14))
-        self.r_bet_entry.pack(side=tk.LEFT, padx=10)
-        self.r_bet_entry.insert(0, "10")
+        # Chip Bank Canvas
+        self.r_chip_canvas = tk.Canvas(bottom_frame, bg="#005500", width=600, height=80, highlightthickness=0)
+        self.r_chip_canvas.pack(side=tk.LEFT, padx=20)
+        self.r_chip_canvas.bind("<Button-1>", self.on_chip_select)
 
         tk.Button(bottom_frame, text="Spin Wheel!", bg="gold", fg="black", font=("Arial", 16, "bold"), command=self.trigger_spin).pack(side=tk.RIGHT, padx=20)
+        self.draw_chip_bank(self.r_chip_canvas)
 
         self.r_canvas.bind("<Button-1>", self.on_roulette_click)
+        self.r_canvas.bind("<Motion>", self.on_roulette_hover)
+        self.r_canvas.bind("<Leave>", self.on_roulette_leave)
         self.roulette_grid_coords = {}
+        self.hovered_bet_key = None
         self.is_spinning = False
         self.spin_angle = 0
+
+    def draw_chip_bank(self, canvas):
+        canvas.delete("all")
+        denoms = [1, 5, 10, 25, 100, 500]
+        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+
+        for i, (denom, color) in enumerate(zip(denoms, colors)):
+            x = 40 + (i * 80)
+            y = 40
+
+            # Highlight active chip
+            if denom == self.active_chip:
+                canvas.create_oval(x-25, y-25, x+25, y+25, outline="yellow", width=4)
+
+            text_color = "black" if denom == 1 else "white"
+            canvas.create_oval(x-20, y-20, x+20, y+20, fill=color, outline="white", width=2, tags=f"chip_{denom}")
+            canvas.create_oval(x-15, y-15, x+15, y+15, outline="white", width=1, tags=f"chip_{denom}")
+            canvas.create_text(x, y, text=str(denom), fill=text_color, font=("Arial", 10, "bold"), tags=f"chip_{denom}")
+
+    def animate_chip_throw(self, canvas, start_x, start_y, end_x, end_y, denom, color):
+        # Create a temporary chip
+        chip_id = canvas.create_oval(start_x-15, start_y-15, start_x+15, start_y+15, fill=color, outline="white", width=2, tags="flying_chip")
+        text_id = canvas.create_text(start_x, start_y, text=str(denom), fill=("black" if denom==1 else "white"), font=("Arial", 8, "bold"), tags="flying_chip")
+
+        steps = 15
+        dx = (end_x - start_x) / steps
+        dy = (end_y - start_y) / steps
+
+        def move(step):
+            if step < steps:
+                canvas.move(chip_id, dx, dy)
+                canvas.move(text_id, dx, dy)
+                self.root.after(20, lambda: move(step+1))
+            else:
+                canvas.delete(chip_id)
+                canvas.delete(text_id)
+                # the actual state update will draw the final chip
+                self.update_ui()
+
+        move(0)
+
+    def on_chip_select(self, event):
+        x = event.x
+        denoms = [1, 5, 10, 25, 100, 500]
+        # Calculate which chip was clicked based on x coordinate
+        idx = int((x - 15) // 80)
+        if 0 <= idx < len(denoms):
+            self.active_chip = denoms[idx]
+            if hasattr(self, 'r_chip_canvas'): self.draw_chip_bank(self.r_chip_canvas)
+            if hasattr(self, 'bj_chip_canvas'): self.draw_chip_bank(self.bj_chip_canvas)
 
     def trigger_spin(self):
         if self.is_spinning: return
@@ -943,14 +998,41 @@ class BlackjackGUI:
             self.roulette_grid_coords[f"half_{text.replace(' ', '_')}"] = (x1, oy2, x2, y2)
 
 
+    def on_roulette_hover(self, event):
+        x, y = event.x, event.y
+        new_hover = None
+        for bet_key, (x1, y1, x2, y2) in self.roulette_grid_coords.items():
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                new_hover = bet_key
+                break
+
+        if new_hover != self.hovered_bet_key:
+            self.hovered_bet_key = new_hover
+            self.update_ui() # force redraw to show/hide highlight
+
+    def on_roulette_leave(self, event):
+        if self.hovered_bet_key is not None:
+            self.hovered_bet_key = None
+            self.update_ui()
+
     def on_roulette_click(self, event):
         x, y = event.x, event.y
-        amount = int(self.r_bet_entry.get() or 0)
+        amount = self.active_chip
         if amount <= 0: return
 
         for bet_key, (x1, y1, x2, y2) in self.roulette_grid_coords.items():
             if x1 <= x <= x2 and y1 <= y <= y2:
+                # Trigger action
                 self.client.send_action("r_bet", bet_type=bet_key, amount=amount)
+
+                # Determine color for chip
+                denoms = [1, 5, 10, 25, 100, 500]
+                colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+                color = colors[denoms.index(amount)] if amount in denoms else "blue"
+
+                # Animate from bottom to click pos
+                # Since chip bank is in a different frame, we approximate start coords relative to canvas
+                self.animate_chip_throw(self.r_canvas, x, 450, x, y, amount, color)
                 break
 
     def leave_room(self):
@@ -983,8 +1065,11 @@ class BlackjackGUI:
         self.status_label = tk.Label(self.top_frame, text="Waiting for state...", bg="#006600", fg="yellow", font=("Arial", 14))
         self.status_label.pack(side=tk.RIGHT, padx=20)
 
-        self.bet_entry = tk.Entry(self.bottom_frame, width=10, font=("Arial", 14))
-        self.bet_button = tk.Button(self.bottom_frame, text="Place Bet", font=("Arial", 12), command=lambda: self.client.send_action("bet", amount=int(self.bet_entry.get() or 0)))
+        self.bj_chip_canvas = tk.Canvas(self.bottom_frame, bg="#006600", width=600, height=80, highlightthickness=0)
+        self.bj_chip_canvas.bind("<Button-1>", self.on_chip_select)
+        self.draw_chip_bank(self.bj_chip_canvas)
+
+        self.bet_button = tk.Button(self.bottom_frame, text="Place Bet", font=("Arial", 16, "bold"), bg="gold", command=self.on_bj_bet)
 
         self.hit_btn = tk.Button(self.bottom_frame, text="Hit", font=("Arial", 12), command=lambda: self.client.send_action("hit"))
         self.stand_btn = tk.Button(self.bottom_frame, text="Stand", font=("Arial", 12), command=lambda: self.client.send_action("stand"))
@@ -993,6 +1078,18 @@ class BlackjackGUI:
         self.ins_btn = tk.Button(self.bottom_frame, text="Insurance", font=("Arial", 12), command=lambda: self.client.send_action("insurance"))
 
         self.start_round_btn = tk.Button(self.bottom_frame, text="Start New Round", font=("Arial", 12), command=lambda: self.client.send_action("start_round"))
+
+    def on_bj_bet(self):
+        amount = getattr(self, 'active_chip', 10)
+        self.client.send_action("bet", amount=amount)
+
+        # Animate chip flight to center
+        denoms = [1, 5, 10, 25, 100, 500]
+        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+        color = colors[denoms.index(amount)] if amount in denoms else "blue"
+
+        # Approx start from bottom center, end at canvas center
+        self.animate_chip_throw(self.canvas, 500, 500, 500, 250, amount, color)
 
     def draw_table(self):
         # Wooden floor background
@@ -1105,8 +1202,13 @@ class BlackjackGUI:
             if not getattr(self, 'is_spinning', False):
                 self.draw_roulette_table()
 
-                if state.get("last_result"):
-                    res = state["last_result"]
+                # Draw hover highlight
+                if getattr(self, 'hovered_bet_key', None) and self.hovered_bet_key in self.roulette_grid_coords:
+                    x1, y1, x2, y2 = self.roulette_grid_coords[self.hovered_bet_key]
+                    self.r_canvas.create_rectangle(x1, y1, x2, y2, outline="yellow", width=4, tags="hover_box")
+
+                if self.game_state.get("last_result"):
+                    res = self.game_state["last_result"]
                     self.r_canvas.create_text(200, 225, text=str(res['number']), fill="white", font=("Arial", 36, "bold"))
                     self.r_canvas.create_text(200, 260, text=res['color'].upper(), fill=res['color'], font=("Arial", 14, "bold"))
 
@@ -1115,8 +1217,8 @@ class BlackjackGUI:
                         x1, y1, x2, y2 = self.roulette_grid_coords[f"number_{res['number']}"]
                         self.r_canvas.create_rectangle(x1, y1, x2, y2, outline="yellow", width=4)
 
-                if "active_bets" in state:
-                    for pid, player_bets in state["active_bets"].items():
+                if "active_bets" in self.game_state:
+                    for pid, player_bets in self.game_state["active_bets"].items():
                         for bet in player_bets:
                             if bet["type"] in self.roulette_grid_coords:
                                 x1, y1, x2, y2 = self.roulette_grid_coords[bet["type"]]
@@ -1153,9 +1255,10 @@ class BlackjackGUI:
         if state == "betting":
             if me and me["state"] == "betting":
                 self.canvas.create_text(500, 250, text="Place your bet", fill="white", font=("Arial", 24, "bold"))
-                self.bet_entry.pack(side=tk.LEFT, padx=10)
-                self.bet_entry.delete(0, tk.END)
-                self.bet_entry.insert(0, "10")
+                self.bj_chip_canvas.pack(side=tk.LEFT, padx=10)
+                self.draw_chip_bank(self.bj_chip_canvas)
+
+
                 self.bet_button.pack(side=tk.LEFT, padx=10)
             else:
                 self.canvas.create_text(500, 250, text="Waiting for others to bet...", fill="white", font=("Arial", 24))
