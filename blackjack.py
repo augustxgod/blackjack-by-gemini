@@ -423,6 +423,9 @@ class RouletteGame:
         elif bet_type == "dozen_1" and 1 <= number <= 12: return 3
         elif bet_type == "dozen_2" and 13 <= number <= 24: return 3
         elif bet_type == "dozen_3" and 25 <= number <= 36: return 3
+        elif bet_type == "col_1" and number != 0 and number % 3 == 1: return 3
+        elif bet_type == "col_2" and number != 0 and number % 3 == 2: return 3
+        elif bet_type == "col_3" and number != 0 and number % 3 == 0: return 3
 
         return 0
 
@@ -816,33 +819,76 @@ class BlackjackGUI:
         self.r_bet_entry.pack(side=tk.LEFT, padx=10)
         self.r_bet_entry.insert(0, "10")
 
-        tk.Button(bottom_frame, text="Spin Wheel!", bg="gold", fg="black", font=("Arial", 16, "bold"), command=lambda: self.client.send_action("r_spin")).pack(side=tk.RIGHT, padx=20)
+        tk.Button(bottom_frame, text="Spin Wheel!", bg="gold", fg="black", font=("Arial", 16, "bold"), command=self.trigger_spin).pack(side=tk.RIGHT, padx=20)
 
         self.r_canvas.bind("<Button-1>", self.on_roulette_click)
         self.roulette_grid_coords = {}
+        self.is_spinning = False
+        self.spin_angle = 0
+
+    def trigger_spin(self):
+        if self.is_spinning: return
+        self.is_spinning = True
+        self.spin_angle = 0
+        self.client.send_action("r_spin")
+        self.animate_spin()
+
+    def animate_spin(self):
+        if not self.is_spinning: return
+        self.spin_angle += 20
+        if self.spin_angle >= 360 * 3: # 3 full rotations
+            self.is_spinning = False
+            self.update_ui() # Force final draw
+            return
+
+        # Draw spinning ball
+        self.r_canvas.delete("ball")
+        import math
+        rad = math.radians(self.spin_angle)
+        ball_x = 200 + (125 * math.cos(rad))
+        ball_y = 225 - (125 * math.sin(rad))
+        self.r_canvas.create_oval(ball_x-5, ball_y-5, ball_x+5, ball_y+5, fill="white", tags="ball")
+
+        self.root.after(30, self.animate_spin)
 
     def draw_roulette_table(self):
         self.r_canvas.delete("all")
 
-        # Draw wooden border
         self.r_canvas.create_rectangle(0, 0, 1000, 450, outline="#5c3a21", width=20)
 
         # 1. Draw Wheel (Left side)
+        import math
         wheel_cx, wheel_cy = 200, 225
-        r_outer, r_inner = 150, 100
-        self.r_canvas.create_oval(wheel_cx - r_outer, wheel_cy - r_outer, wheel_cx + r_outer, wheel_cy + r_outer, outline="#b8860b", width=8, fill="#2a1b12")
-        self.r_canvas.create_oval(wheel_cx - r_inner, wheel_cy - r_inner, wheel_cx + r_inner, wheel_cy + r_inner, outline="#b8860b", width=3, fill="#1a1a1a")
-        self.r_canvas.create_text(wheel_cx, wheel_cy, text="ROULETTE", fill="#b8860b", font=("Arial", 14, "bold"))
+        r_outer, r_inner = 170, 110
+        self.r_canvas.create_oval(wheel_cx - r_outer, wheel_cy - r_outer, wheel_cx + r_outer, wheel_cy + r_outer, outline="#b8860b", width=10, fill="#2a1b12")
+        self.r_canvas.create_oval(wheel_cx - r_inner, wheel_cy - r_inner, wheel_cx + r_inner, wheel_cy + r_inner, outline="#b8860b", width=4, fill="#1a1a1a")
 
-        # 2. Draw Betting Grid (Right side)
-        grid_start_x = 400
-        grid_start_y = 50
-        cell_w, cell_h = 40, 60
-
+        # Draw wheel sectors
+        wheel_nums = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
+        angle_step = 360 / 37
         red_nums = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
 
+        for i, num in enumerate(wheel_nums):
+            start_angle = i * angle_step
+            color = "#008000" if num == 0 else ("#cc0000" if num in red_nums else "#1a1a1a")
+            self.r_canvas.create_arc(wheel_cx - r_outer, wheel_cy - r_outer, wheel_cx + r_outer, wheel_cy + r_outer, start=start_angle, extent=angle_step, fill=color, outline="white")
+
+            # Draw number text
+            mid_angle = math.radians(start_angle + (angle_step / 2))
+            text_x = wheel_cx + (140 * math.cos(mid_angle))
+            text_y = wheel_cy - (140 * math.sin(mid_angle)) # Tkinter y is inverted
+            self.r_canvas.create_text(text_x, text_y, text=str(num), fill="white", font=("Arial", 8, "bold"))
+
+        self.r_canvas.create_oval(wheel_cx - r_inner, wheel_cy - r_inner, wheel_cx + r_inner, wheel_cy + r_inner, outline="#b8860b", width=4, fill="#1a1a1a")
+        self.r_canvas.create_text(wheel_cx, wheel_cy, text="ROULETTE", fill="#b8860b", font=("Arial", 16, "bold"))
+
+        # 2. Draw Betting Grid (Right side)
+        grid_start_x = 420
+        grid_start_y = 50
+        cell_w, cell_h = 35, 50
+
         # Zero (Green)
-        zx1, zy1, zx2, zy2 = grid_start_x, grid_start_y, grid_start_x + 50, grid_start_y + (cell_h * 3)
+        zx1, zy1, zx2, zy2 = grid_start_x, grid_start_y, grid_start_x + 40, grid_start_y + (cell_h * 3)
         self.r_canvas.create_rectangle(zx1, zy1, zx2, zy2, fill="#008000", outline="white")
         self.r_canvas.create_text((zx1+zx2)/2, (zy1+zy2)/2, text="0", fill="white", font=("Arial", 20, "bold"))
         self.roulette_grid_coords["number_0"] = (zx1, zy1, zx2, zy2)
@@ -851,7 +897,7 @@ class BlackjackGUI:
         num = 1
         for col in range(12):
             for row in range(2, -1, -1):
-                x1 = grid_start_x + 50 + (col * cell_w)
+                x1 = grid_start_x + 40 + (col * cell_w)
                 y1 = grid_start_y + (row * cell_h)
                 x2 = x1 + cell_w
                 y2 = y1 + cell_h
@@ -863,8 +909,19 @@ class BlackjackGUI:
                 self.roulette_grid_coords[f"number_{num}"] = (x1, y1, x2, y2)
                 num += 1
 
+        # 2 to 1 columns
+        col_x = grid_start_x + 40 + (12 * cell_w)
+        for row in range(2, -1, -1):
+            x1 = col_x
+            y1 = grid_start_y + (row * cell_h)
+            x2 = x1 + 50
+            y2 = y1 + cell_h
+            self.r_canvas.create_rectangle(x1, y1, x2, y2, fill="#005500", outline="white")
+            self.r_canvas.create_text((x1+x2)/2, (y1+y2)/2, text="2 to 1", fill="white", font=("Arial", 10, "bold"))
+            self.roulette_grid_coords[f"col_{3-row}"] = (x1, y1, x2, y2)
+
         # Outside Bets
-        ox1 = grid_start_x + 50
+        ox1 = grid_start_x + 40
         oy1 = grid_start_y + (cell_h * 3)
 
         for i, text in enumerate(["1st 12", "2nd 12", "3rd 12"]):
@@ -884,6 +941,7 @@ class BlackjackGUI:
             self.r_canvas.create_rectangle(x1, oy2, x2, y2, fill=color, outline="white")
             self.r_canvas.create_text((x1+x2)/2, (oy2+y2)/2, text=text, fill="white", font=("Arial", 12, "bold"))
             self.roulette_grid_coords[f"half_{text.replace(' ', '_')}"] = (x1, oy2, x2, y2)
+
 
     def on_roulette_click(self, event):
         x, y = event.x, event.y
@@ -1044,22 +1102,30 @@ class BlackjackGUI:
             if me and hasattr(self, 'r_balance_label'):
                 self.r_balance_label.config(text=f"Balance: ${me['balance']}")
 
-            self.draw_roulette_table()
+            if not getattr(self, 'is_spinning', False):
+                self.draw_roulette_table()
 
-            if state.get("last_result"):
-                res = state["last_result"]
-                self.r_canvas.create_text(200, 225, text=str(res['number']), fill="white", font=("Arial", 36, "bold"))
-                self.r_canvas.create_text(200, 260, text=res['color'].upper(), fill=res['color'], font=("Arial", 14, "bold"))
+                if state.get("last_result"):
+                    res = state["last_result"]
+                    self.r_canvas.create_text(200, 225, text=str(res['number']), fill="white", font=("Arial", 36, "bold"))
+                    self.r_canvas.create_text(200, 260, text=res['color'].upper(), fill=res['color'], font=("Arial", 14, "bold"))
 
-            if "active_bets" in state:
-                for pid, player_bets in state["active_bets"].items():
-                    for bet in player_bets:
-                        if bet["type"] in self.roulette_grid_coords:
-                            x1, y1, x2, y2 = self.roulette_grid_coords[bet["type"]]
-                            cx, cy = (x1+x2)/2, (y1+y2)/2
+                    # Highlight winning number cell
+                    if f"number_{res['number']}" in self.roulette_grid_coords:
+                        x1, y1, x2, y2 = self.roulette_grid_coords[f"number_{res['number']}"]
+                        self.r_canvas.create_rectangle(x1, y1, x2, y2, outline="yellow", width=4)
 
-                            self.r_canvas.create_oval(cx-15, cy-15, cx+15, cy+15, fill="blue", outline="white", width=2)
-                            self.r_canvas.create_text(cx, cy, text=str(bet["amount"]), fill="white", font=("Arial", 8, "bold"))
+                if "active_bets" in state:
+                    for pid, player_bets in state["active_bets"].items():
+                        for bet in player_bets:
+                            if bet["type"] in self.roulette_grid_coords:
+                                x1, y1, x2, y2 = self.roulette_grid_coords[bet["type"]]
+                                cx, cy = (x1+x2)/2, (y1+y2)/2
+
+                                # Draw chip
+                                self.r_canvas.create_oval(cx-15, cy-15, cx+15, cy+15, fill="blue", outline="white", width=2)
+                                self.r_canvas.create_oval(cx-10, cy-10, cx+10, cy+10, outline="white", width=1)
+                                self.r_canvas.create_text(cx, cy, text=str(bet["amount"]), fill="white", font=("Arial", 8, "bold"))
             return
 
         if self.current_view != "blackjack":
