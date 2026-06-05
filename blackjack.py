@@ -707,6 +707,10 @@ class BlackjackGUI:
         self.game_state = None
         self.current_view = "lobby"
         self.active_chip = 10 # Default chip selection
+        self.hand_history = []
+        self.prev_state = None
+        self.animated_cards = set()
+        self.animating_count = 0
 
         self.setup_start_screen()
 
@@ -805,7 +809,7 @@ class BlackjackGUI:
 
         top_bar = tk.Frame(self.r_frame, bg="#333")
         top_bar.pack(fill=tk.X)
-        tk.Button(top_bar, text="< Back to Lobby", command=self.leave_room, bg="#333", fg="white", font=("Arial", 12)).pack(side=tk.LEFT, padx=10, pady=5)
+        tk.Button(top_bar, text="⬅ Lobby", command=self.leave_room, bg="#D4AF37", fg="black", relief=tk.RAISED, borderwidth=3, font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=10, pady=5)
         self.r_balance_label = tk.Label(top_bar, text="Balance: $", fg="gold", bg="#333", font=("Arial", 14, "bold"))
         self.r_balance_label.pack(side=tk.RIGHT, padx=20)
 
@@ -833,8 +837,8 @@ class BlackjackGUI:
 
     def draw_chip_bank(self, canvas):
         canvas.delete("all")
-        denoms = [1, 5, 10, 25, 100, 500]
-        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+        denoms = [5, 10, 25, 50, 100]
+        colors = ["#FF0000", "#0000FF", "#008000", "#FFA500", "#1a1a1a"]
 
         for i, (denom, color) in enumerate(zip(denoms, colors)):
             x = 40 + (i * 80)
@@ -873,7 +877,7 @@ class BlackjackGUI:
 
     def on_chip_select(self, event):
         x = event.x
-        denoms = [1, 5, 10, 25, 100, 500]
+        denoms = [5, 10, 25, 50, 100]
         # Calculate which chip was clicked based on x coordinate
         idx = int((x - 15) // 80)
         if 0 <= idx < len(denoms):
@@ -1026,8 +1030,8 @@ class BlackjackGUI:
                 self.client.send_action("r_bet", bet_type=bet_key, amount=amount)
 
                 # Determine color for chip
-                denoms = [1, 5, 10, 25, 100, 500]
-                colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+                denoms = [5, 10, 25, 50, 100]
+                colors = ["#FF0000", "#0000FF", "#008000", "#FFA500", "#1a1a1a"]
                 color = colors[denoms.index(amount)] if amount in denoms else "blue"
 
                 # Animate from bottom to click pos
@@ -1051,16 +1055,26 @@ class BlackjackGUI:
         self.top_frame = tk.Frame(self.root, bg="#006600")
         self.top_frame.pack(side=tk.TOP, fill=tk.X, pady=10)
 
-        tk.Button(self.top_frame, text="< Back to Lobby", command=self.leave_room, bg="#333", fg="white", font=("Arial", 12)).pack(side=tk.LEFT, padx=10)
+        tk.Button(self.top_frame, text="⬅ Lobby", command=self.leave_room, bg="#D4AF37", fg="black", relief=tk.RAISED, borderwidth=3, font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=10)
 
         self.canvas = tk.Canvas(self.root, bg="#006600", width=1000, height=500, highlightthickness=0)
         self.canvas.pack(expand=True, fill=tk.BOTH)
 
+        self.draw_static_table()
+
         self.bottom_frame = tk.Frame(self.root, bg="#006600")
         self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=20)
 
-        self.balance_label = tk.Label(self.top_frame, text="", bg="#006600", fg="white", font=("Arial", 14, "bold"))
-        self.balance_label.pack(side=tk.LEFT, padx=20)
+        self.avatar_frame = tk.Frame(self.top_frame, bg="#006600")
+        self.avatar_frame.pack(side=tk.LEFT, padx=20)
+
+        self.avatar_canvas = tk.Canvas(self.avatar_frame, bg="#006600", width=40, height=40, highlightthickness=0)
+        self.avatar_canvas.pack(side=tk.LEFT)
+        self.avatar_canvas.create_oval(2, 2, 38, 38, fill="#D4AF37", outline="white", width=2)
+        self.avatar_canvas.create_text(20, 20, text="👤", fill="black", font=("Arial", 16))
+
+        self.balance_label = tk.Label(self.avatar_frame, text="", bg="#006600", fg="gold", font=("Arial", 14, "bold"))
+        self.balance_label.pack(side=tk.LEFT, padx=10)
 
         self.status_label = tk.Label(self.top_frame, text="Waiting for state...", bg="#006600", fg="yellow", font=("Arial", 14))
         self.status_label.pack(side=tk.RIGHT, padx=20)
@@ -1071,11 +1085,12 @@ class BlackjackGUI:
 
         self.bet_button = tk.Button(self.bottom_frame, text="Place Bet", font=("Arial", 16, "bold"), bg="gold", command=self.on_bj_bet)
 
-        self.hit_btn = tk.Button(self.bottom_frame, text="Hit", font=("Arial", 12), command=lambda: self.client.send_action("hit"))
-        self.stand_btn = tk.Button(self.bottom_frame, text="Stand", font=("Arial", 12), command=lambda: self.client.send_action("stand"))
-        self.double_btn = tk.Button(self.bottom_frame, text="Double", font=("Arial", 12), command=lambda: self.client.send_action("double"))
-        self.split_btn = tk.Button(self.bottom_frame, text="Split", font=("Arial", 12), command=lambda: self.client.send_action("split"))
-        self.ins_btn = tk.Button(self.bottom_frame, text="Insurance", font=("Arial", 12), command=lambda: self.client.send_action("insurance"))
+        button_style = {"font": ("Arial", 14, "bold"), "bg": "#1a1a1a", "fg": "white", "relief": tk.RAISED, "borderwidth": 3, "width": 8}
+        self.hit_btn = tk.Button(self.bottom_frame, text="Hit", command=lambda: self.client.send_action("hit"), **button_style)
+        self.stand_btn = tk.Button(self.bottom_frame, text="Stand", command=lambda: self.client.send_action("stand"), **button_style)
+        self.double_btn = tk.Button(self.bottom_frame, text="Double", command=lambda: self.client.send_action("double"), **button_style)
+        self.split_btn = tk.Button(self.bottom_frame, text="Split", command=lambda: self.client.send_action("split"), **button_style)
+        self.ins_btn = tk.Button(self.bottom_frame, text="Insurance", command=lambda: self.client.send_action("insurance"), **button_style)
 
         self.start_round_btn = tk.Button(self.bottom_frame, text="Start New Round", font=("Arial", 12), command=lambda: self.client.send_action("start_round"))
 
@@ -1084,23 +1099,35 @@ class BlackjackGUI:
         self.client.send_action("bet", amount=amount)
 
         # Animate chip flight to center
-        denoms = [1, 5, 10, 25, 100, 500]
-        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+        denoms = [5, 10, 25, 50, 100]
+        colors = ["#FF0000", "#0000FF", "#008000", "#FFA500", "#1a1a1a"]
         color = colors[denoms.index(amount)] if amount in denoms else "blue"
 
         # Approx start from bottom center, end at canvas center
         self.animate_chip_throw(self.canvas, 500, 500, 500, 250, amount, color)
 
-    def draw_table(self):
+    def draw_static_table(self):
         # Wooden floor background
         self.canvas.create_rectangle(0, 0, 1000, 500, fill="#3d2314", outline="")
 
         # Green casino table oval
         self.canvas.create_oval(50, -250, 950, 480, fill="#006600", outline="#b8860b", width=10)
 
+        # Felt texture
+        import random
+        random.seed(42) # Consistent texture
+        for _ in range(500):
+            x = random.randint(60, 940)
+            y = random.randint(10, 470)
+            # Only draw dots roughly inside the lower half of the oval visible on screen
+            self.canvas.create_oval(x, y, x+2, y+2, fill="#007700", outline="")
+        random.seed() # Reset seed
+
         # Dealer area curved text
-        self.canvas.create_text(500, 170, text="BLACKJACK PAYS 3 TO 2", fill="#b8860b", font=("Arial", 16, "bold"))
-        self.canvas.create_text(500, 195, text="Dealer must draw to 16, and stand on all 17s", fill="#b8860b", font=("Arial", 12))
+        # Draw a small placard to the side
+        self.canvas.create_rectangle(700, 50, 950, 120, fill="#1a1a1a", outline="#b8860b", width=2)
+        self.canvas.create_text(825, 70, text="BLACKJACK PAYS 3 TO 2", fill="#b8860b", font=("Arial", 12, "bold"))
+        self.canvas.create_text(825, 95, text="Dealer must draw to 16,\nand stand on all 17s", fill="#b8860b", font=("Arial", 10), justify=tk.CENTER)
 
         # Insurance line
         self.canvas.create_arc(200, -100, 800, 300, start=180, extent=180, style=tk.ARC, outline="#b8860b", width=2)
@@ -1142,47 +1169,77 @@ class BlackjackGUI:
             cy = y - (i * offset_y)
             text_color = "black" if denom == 1 else "white"
 
+            # Drop shadow
+            self.canvas.create_oval(x, cy+2, x + chip_width, cy + chip_height+2, fill="#111111", outline="", stipple="gray50", tags="dynamic")
             # Outer ring
-            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1)
+            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1, tags="dynamic")
             # Inner ring
-            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1)
+            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1, tags="dynamic")
             # Dash pattern on the edge
-            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2)
-            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2)
+            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2, tags="dynamic")
+            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2, tags="dynamic")
 
             # Value text
-            self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"))
+            self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, tags="dynamic", font=("Arial", 8, "bold"))
 
     def draw_card(self, x, y, card_dict, hidden=False):
         width, height = 65, 95
-        # Card shadow
-        self.canvas.create_rectangle(x+3, y+3, x+width+3, y+height+3, fill="#111111", outline="")
+        # Card shadow - multiple layers for softer shadow
+        self.canvas.create_rectangle(x+5, y+5, x+width+5, y+height+5, fill="#0d1f0d", outline="", stipple="gray50", tags="dynamic")
+        self.canvas.create_rectangle(x+2, y+2, x+width+2, y+height+2, fill="#111111", outline="", tags="dynamic")
 
         if hidden:
             # Card back
-            self.canvas.create_rectangle(x, y, x+width, y+height, fill="#003366", outline="white", width=2)
+            self.canvas.create_rectangle(x, y, x+width, y+height, fill="#003366", outline="white", width=2, tags="dynamic")
             # Pattern on back
             for i in range(5, width-5, 10):
-                self.canvas.create_line(x+i, y+5, x+i, y+height-5, fill="#005599", width=2)
-            self.canvas.create_oval(x+15, y+30, x+width-15, y+height-30, outline="white", width=2)
+                self.canvas.create_line(x+i, y+5, x+i, y+height-5, fill="#005599", width=2, tags="dynamic")
+            self.canvas.create_oval(x+15, y+30, x+width-15, y+height-30, outline="white", width=2, tags="dynamic")
         else:
             # Card face
-            self.canvas.create_rectangle(x, y, x+width, y+height, fill="white", outline="#333333", width=1)
+            self.canvas.create_rectangle(x, y, x+width, y+height, fill="white", outline="#333333", width=1, tags="dynamic")
+            # Subtle paper texture
+            for i in range(2, width, 4):
+                self.canvas.create_line(x+i, y+1, x+i, y+height-1, fill="#f9f9f9", width=1, tags="dynamic")
             color = "#cc0000" if card_dict["suit"] in ['♥', '♦'] else "black"
 
             # Rank top-left
-            self.canvas.create_text(x+12, y+15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"))
-            self.canvas.create_text(x+12, y+30, text=card_dict["suit"], fill=color, font=("Arial", 12))
+            self.canvas.create_text(x+12, y+15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"), tags="dynamic")
+            self.canvas.create_text(x+12, y+30, text=card_dict["suit"], fill=color, font=("Arial", 12), tags="dynamic")
 
             # Center suit (large)
-            self.canvas.create_text(x+width/2, y+height/2, text=card_dict["suit"], fill=color, font=("Arial", 28))
+            self.canvas.create_text(x+width/2, y+height/2, text=card_dict["suit"], fill=color, font=("Arial", 28), tags="dynamic")
 
             # Rank bottom-right
-            self.canvas.create_text(x+width-12, y+height-30, text=card_dict["suit"], fill=color, font=("Arial", 12))
-            self.canvas.create_text(x+width-12, y+height-15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"))
+            self.canvas.create_text(x+width-12, y+height-30, text=card_dict["suit"], fill=color, font=("Arial", 12), tags="dynamic")
+            self.canvas.create_text(x+width-12, y+height-15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"), tags="dynamic")
 
+
+
+    def animate_card_deal(self, start_x, start_y, end_x, end_y, card_dict):
+        # We draw a temporary back card and slide it
+        temp_card = self.canvas.create_rectangle(start_x, start_y, start_x+65, start_y+95, fill="#003366", outline="white", width=2, tags="anim_card")
+        self.animating_count += 1
+
+        steps = 10
+        dx = (end_x - start_x) / steps
+        dy = (end_y - start_y) / steps
+
+        def move(step):
+            if step < steps:
+                self.canvas.move(temp_card, dx, dy)
+                self.root.after(15, lambda: move(step+1))
+            else:
+                self.canvas.delete(temp_card)
+                self.animating_count -= 1
+                if self.animating_count <= 0:
+                    self.animating_count = 0
+                    self.update_ui() # Full redraw
+
+        move(0)
 
     def update_ui(self):
+        if getattr(self, 'animating_count', 0) > 0: return
         if not self.game_state: return
 
         state = self.game_state["state"]
@@ -1233,8 +1290,7 @@ class BlackjackGUI:
         if self.current_view != "blackjack":
             return
 
-        self.canvas.delete("all")
-        self.draw_table()
+        self.canvas.delete("dynamic")
 
         for widget in self.bottom_frame.winfo_children():
             widget.pack_forget()
@@ -1252,19 +1308,26 @@ class BlackjackGUI:
         if state == "waiting_for_players" or state == "game_over":
             self.start_round_btn.pack(side=tk.LEFT, padx=10)
 
+        # --- BETTING STATE LOGIC ---
         if state == "betting":
             if me and me["state"] == "betting":
-                self.canvas.create_text(500, 250, text="Place your bet", fill="white", font=("Arial", 24, "bold"))
+                self.canvas.create_text(500, 250, text="Place your bet", fill="white", font=("Arial", 24, "bold"), tags="dynamic")
                 self.bj_chip_canvas.pack(side=tk.LEFT, padx=10)
                 self.draw_chip_bank(self.bj_chip_canvas)
-
-
                 self.bet_button.pack(side=tk.LEFT, padx=10)
             else:
-                self.canvas.create_text(500, 250, text="Waiting for others to bet...", fill="white", font=("Arial", 24))
+                self.canvas.create_text(500, 250, text="Waiting for others to bet...", fill="white", font=("Arial", 24), tags="dynamic")
+                self.bj_chip_canvas.pack_forget()
+                self.bet_button.pack_forget()
+        else:
+            # FORCE HIDE when game is playing, dealer turn, or game over
+            if hasattr(self, 'bj_chip_canvas'):
+                self.bj_chip_canvas.pack_forget()
+            if hasattr(self, 'bet_button'):
+                self.bet_button.pack_forget()
 
         if state in ["playing", "dealer_turn", "game_over"]:
-            self.canvas.create_text(500, 30, text="Dealer", fill="white", font=("Arial", 16))
+            self.canvas.create_text(500, 30, text="Dealer", fill="white", font=("Arial", 16), tags="dynamic")
             dealer = self.game_state["dealer"]
             dealer_cards = dealer["hand"]["cards"]
             dealer_x = 500 - (len(dealer_cards) * 35)
@@ -1274,7 +1337,13 @@ class BlackjackGUI:
                 self.draw_card(dealer_x + i*70, 50, c, hidden)
 
             if dealer["show_hidden"]:
-                self.canvas.create_text(500, 160, text=f"Score: {dealer['hand']['score']}", fill="white")
+                self.canvas.create_text(500, 160, text=f"Score: {dealer['hand']['score']}", fill="white", tags="dynamic")
+            else:
+                if dealer_cards:
+                    visible_card = dealer_cards[0]
+                    rank = visible_card["rank"]
+                    val = 11 if rank == "A" else (10 if rank in ["J", "Q", "K"] else int(rank))
+                    self.canvas.create_text(500, 160, text=f"Dealer (Show {val})", fill="white", font=("Arial", 14), tags="dynamic")
 
             num_players = len(self.game_state["player_order"])
             if num_players > 0:
@@ -1285,17 +1354,50 @@ class BlackjackGUI:
 
                     is_current = (self.game_state["current_player_id"] == pid and state == "playing")
                     if is_current:
-                        self.canvas.create_rectangle(center_x-120, 200, center_x+120, 450, outline="yellow", width=3)
+                        # Soft glow effect
+                        self.canvas.create_rectangle(center_x-124, 196, center_x+124, 454, outline="#ffffaa", width=1, dash=(2, 4), tags="dynamic")
+                        self.canvas.create_rectangle(center_x-122, 198, center_x+122, 452, outline="#ffff55", width=1, tags="dynamic")
+                        self.canvas.create_rectangle(center_x-120, 200, center_x+120, 450, outline="yellow", width=2, tags="dynamic")
 
-                    self.canvas.create_text(center_x, 220, text=f"{p['name']} (${p['balance']})", fill="white", font=("Arial", 14, "bold"))
+                        # AI Advisor
+                        adv_x = 850
+                        adv_y = 150
+                        self.canvas.create_rectangle(adv_x, adv_y, adv_x+130, adv_y+80, fill="#1a1a1a", outline="#b8860b", width=2, tags="dynamic")
+                        self.canvas.create_text(adv_x+65, adv_y+20, text="🤖 AI Advisor", fill="#b8860b", font=("Arial", 12, "bold"), tags="dynamic")
+
+                        suggestion = "STAND"
+                        try:
+                            if not p.get("hands") or len(p["hands"]) == 0 or not dealer["hand"].get("cards"):
+                                raise Exception("Cards missing")
+                            player_score = p["hands"][p["current_hand_idx"]]["score"]
+                            dealer_visible_card = dealer["hand"]["cards"][0]
+                            d_rank = dealer_visible_card["rank"]
+                            d_val = 11 if d_rank == "A" else (10 if d_rank in ["J", "Q", "K"] else int(d_rank))
+
+                            if player_score < 12:
+                                suggestion = "HIT"
+                            elif player_score == 12 and d_val in [2,3,4,5,6]:
+                                suggestion = "STAND"
+                            elif player_score in [13, 14, 15, 16] and d_val in [2,3,4,5,6]:
+                                suggestion = "STAND"
+                            elif player_score >= 17:
+                                suggestion = "STAND"
+                            else:
+                                suggestion = "HIT"
+                        except:
+                            pass
+
+                        self.canvas.create_text(adv_x+65, adv_y+50, text=f"Suggested: {suggestion}", fill="white", font=("Arial", 10), tags="dynamic")
+
+                    self.canvas.create_text(center_x, 220, text=f"{p['name']} (${p['balance']})", tags="dynamic", fill="white", font=("Arial", 14, "bold"))
 
                     if p["message"]:
                         msg_color = "gold" if "Win" in p["message"] or "Blackjack" in p["message"] else ("red" if "Lose" in p["message"] or "Bust" in p["message"] else "white")
-                        self.canvas.create_text(center_x, 350, text=p["message"], fill=msg_color, font=("Arial", 28, "bold"), tags="result_msg")
+                        self.canvas.create_text(center_x, 350, text=p["message"], fill=msg_color, font=("Arial", 28, "bold"), tags=("dynamic", "result_msg"))
 
                     for h_idx, h in enumerate(p["hands"]):
                         hy = 250 + (h_idx * 110)
-                        self.canvas.create_text(center_x, hy-15, text=f"Bet: ${h['bet']} | Score: {h['score']}", fill="white")
+                        self.canvas.create_text(center_x, hy-15, text=f"Bet: ${h['bet']} | Score: {h['score']}", fill="white", tags="dynamic")
 
                         if h['bet'] > 0:
                             # Draw chips significantly to the left of the cards
@@ -1304,9 +1406,65 @@ class BlackjackGUI:
                         # Draw cards centered
                         cards_x = center_x - (len(h["cards"]) * 20)
                         for c_idx, c in enumerate(h["cards"]):
-                            self.draw_card(cards_x + c_idx*40, hy, c)
+                            target_x = cards_x + c_idx*40
+                            target_y = hy
+                            card_id = f"{pid}_{h_idx}_{c_idx}"
+
+                            if card_id not in self.animated_cards:
+                                self.animated_cards.add(card_id)
+                                # Trigger animation from deck position
+                                self.animate_card_deal(800, 50, target_x, target_y, c)
+                                # The animation handles drawing a flying card. We won't draw the final card face right now,
+                                # but we WON'T return so the rest of the UI continues to draw.
+                            else:
+                                self.draw_card(target_x, target_y, c)
+
+            # Hand History logic
+            if state == "betting":
+                self.animated_cards.clear()
+            if self.prev_state in ["playing", "dealer_turn"] and state == "game_over":
+                if me and me.get("message"):
+                    # Clean up message and grab first significant word
+                    msg = me.get("message", "").strip()
+                    if "Win" in msg or "Blackjack" in msg: outcome = "Win"
+                    elif "Lose" in msg or "Bust" in msg: outcome = "Loss"
+                    else: outcome = "Push"
+                    self.hand_history.insert(0, outcome)
+                    self.hand_history = self.hand_history[:5]
+
+            self.prev_state = state
+
+            # Draw History Panel
+            hist_x = 20
+            hist_y = 150
+            self.canvas.create_rectangle(hist_x, hist_y, hist_x+100, hist_y+150, fill="#1a1a1a", outline="#b8860b", width=2, tags="dynamic")
+            self.canvas.create_text(hist_x+50, hist_y+20, text="HISTORY", fill="#b8860b", font=("Arial", 10, "bold"), tags="dynamic")
+            for i, res in enumerate(self.hand_history):
+                color = "green" if res == "Win" else ("red" if res == "Loss" else "white")
+                self.canvas.create_text(hist_x+50, hist_y+50 + (i*20), text=res, fill=color, font=("Arial", 10, "bold"), tags="dynamic")
 
             if state == "playing" and self.game_state["current_player_id"] == self.player_id:
+                h = me["hands"][me["current_hand_idx"]]
+
+                # Double down logic
+                if len(h["cards"]) == 2:
+                    self.double_btn.config(state=tk.NORMAL, bg="#1a1a1a")
+                else:
+                    self.double_btn.config(state=tk.DISABLED, bg="#555555")
+
+                # Split logic
+                if len(h["cards"]) == 2 and h["cards"][0]["rank"] == h["cards"][1]["rank"]:
+                    self.split_btn.config(state=tk.NORMAL, bg="#1a1a1a")
+                else:
+                    self.split_btn.config(state=tk.DISABLED, bg="#555555")
+
+                # Insurance logic
+                dealer_up_card = dealer["hand"]["cards"][0] if dealer["hand"]["cards"] else None
+                if dealer_up_card and dealer_up_card["rank"] == "A" and len(me["hands"]) == 1 and len(h["cards"]) == 2 and me.get("insurance_bet", 0) == 0:
+                    self.ins_btn.config(state=tk.NORMAL, bg="#1a1a1a")
+                else:
+                    self.ins_btn.config(state=tk.DISABLED, bg="#555555")
+
                 self.hit_btn.pack(side=tk.LEFT, padx=5)
                 self.stand_btn.pack(side=tk.LEFT, padx=5)
                 self.double_btn.pack(side=tk.LEFT, padx=5)
