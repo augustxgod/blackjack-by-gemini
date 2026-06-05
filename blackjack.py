@@ -1285,20 +1285,23 @@ class BlackjackGUI:
 
                     is_current = (self.game_state["current_player_id"] == pid and state == "playing")
                     if is_current:
-                        self.canvas.create_rectangle(center_x-100, 180, center_x+100, 480, outline="yellow", width=3)
+                        self.canvas.create_rectangle(center_x-120, 200, center_x+120, 450, outline="yellow", width=3)
 
-                    self.canvas.create_text(center_x, 200, text=f"{p['name']} (${p['balance']})", fill="white", font=("Arial", 14, "bold"))
+                    self.canvas.create_text(center_x, 220, text=f"{p['name']} (${p['balance']})", fill="white", font=("Arial", 14, "bold"))
 
                     if p["message"]:
-                        self.canvas.create_text(center_x, 220, text=p["message"], fill="yellow")
+                        msg_color = "gold" if "Win" in p["message"] or "Blackjack" in p["message"] else ("red" if "Lose" in p["message"] or "Bust" in p["message"] else "white")
+                        self.canvas.create_text(center_x, 350, text=p["message"], fill=msg_color, font=("Arial", 28, "bold"), tags="result_msg")
 
                     for h_idx, h in enumerate(p["hands"]):
-                        hy = 250 + (h_idx * 100)
+                        hy = 250 + (h_idx * 110)
                         self.canvas.create_text(center_x, hy-15, text=f"Bet: ${h['bet']} | Score: {h['score']}", fill="white")
 
                         if h['bet'] > 0:
-                            self.draw_chips(center_x - 60, hy + 20, h['bet'])
+                            # Draw chips significantly to the left of the cards
+                            self.draw_chips(center_x - 100, hy + 40, h['bet'])
 
+                        # Draw cards centered
                         cards_x = center_x - (len(h["cards"]) * 20)
                         for c_idx, c in enumerate(h["cards"]):
                             self.draw_card(cards_x + c_idx*40, hy, c)
