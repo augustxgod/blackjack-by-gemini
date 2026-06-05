@@ -30,123 +30,8 @@ class Card:
         return f"{self.rank}{self.suit}"
 
     def to_dict(self):
-        return {"suit": self.suit, "rank": self.rank}
-
-    @staticmethod
-    def from_dict(d):
-        return Card(d["suit"], d["rank"])
-
-class Deck:
-    def __init__(self, num_decks=6):
-        self.num_decks = num_decks
-        self.cards = []
-        self.build()
-
-    def build(self):
-        suits = ['♥', '♦', '♣', '♠']
-        ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
-        self.cards = [Card(s, r) for _ in range(self.num_decks) for s in suits for r in ranks]
-        self.shuffle()
-
-    def shuffle(self):
-        random.shuffle(self.cards)
-
-    def deal(self):
-        if len(self.cards) < 20:
-            self.build()
-        return self.cards.pop()
-
-class Hand:
-    def __init__(self, bet=0):
-        self.cards = []
-        self.bet = bet
-        self.doubled = False
-        self.is_blackjack = False
-        self.is_busted = False
-        self.is_stand = False
-
-    def add_card(self, card):
-        self.cards.append(card)
-
-    def get_score(self):
-        score = 0
-        aces = 0
-        for card in self.cards:
-            score += card.get_value()
-            if card.rank == 'A':
-                aces += 1
-
-        while score > 21 and aces > 0:
-            score -= 10
-            aces -= 1
-
-        return score
-
-    def can_split(self):
-        return len(self.cards) == 2 and self.cards[0].get_value() == self.cards[1].get_value()
-
-    def to_dict(self):
         return {
-            "cards": [c.to_dict() for c in self.cards],
-            "bet": self.bet,
-            "doubled": self.doubled,
-            "is_blackjack": self.is_blackjack,
-            "is_busted": self.is_busted,
-            "is_stand": self.is_stand,
-            "score": self.get_score()
-        }
-
-    @staticmethod
-    def from_dict(d):
-        h = Hand(d["bet"])
-        h.cards = [Card.from_dict(c) for c in d["cards"]]
-        h.doubled = d["doubled"]
-        h.is_blackjack = d["is_blackjack"]
-        h.is_busted = d["is_busted"]
-        h.is_stand = d["is_stand"]
-        return h
-
-class Player:
-    def __init__(self, player_id, name="Player", balance=1000):
-        self.player_id = player_id
-        self.name = name
-        self.balance = balance
-        self.hands = []
-        self.insurance_bet = 0
-        self.current_hand_idx = 0
-        self.state = "waiting"
-        self.message = ""
-
-    def to_dict(self):
-        return {
-            "player_id": self.player_id,
-            "name": self.name,
-            "balance": self.balance,
-            "hands": [h.to_dict() for h in self.hands],
-            "insurance_bet": self.insurance_bet,
-            "current_hand_idx": self.current_hand_idx,
-            "state": self.state,
-            "message": self.message
-        }
-
-    @staticmethod
-    def from_dict(d):
-        p = Player(d["player_id"], d["name"], d["balance"])
-        p.hands = [Hand.from_dict(h) for h in d["hands"]]
-        p.insurance_bet = d["insurance_bet"]
-        p.current_hand_idx = d["current_hand_idx"]
-        p.state = d["state"]
-        p.message = d["message"]
-        return p
-
-class Dealer:
-    def __init__(self):
-        self.hand = Hand()
-        self.show_hidden = False
-
-    def to_dict(self):
-        return {
-            "hand": self.hand.to_dict(),
+            "hand": {"cards": [c.to_dict() for c in self.hand.cards], "score": self.hand.get_score(), "visible_score": self.hand.get_visible_score()},
             "show_hidden": self.show_hidden
         }
 
@@ -389,7 +274,9 @@ class Game:
             "dealer": self.dealer.to_dict(),
             "players": {pid: p.to_dict() for pid, p in self.players.items()},
             "player_order": self.player_order,
-            "current_player_id": self.player_order[self.current_player_idx] if self.current_player_idx < len(self.player_order) else None
+            "player_order": self.player_order,
+            "current_player_id": self.player_order[self.current_player_idx] if self.current_player_idx < len(self.player_order) else None,
+            "history": self.hand_history
         }
 
 
@@ -1048,10 +935,15 @@ class BlackjackGUI:
         for widget in self.root.winfo_children():
             widget.destroy()
 
-        self.top_frame = tk.Frame(self.root, bg="#006600")
-        self.top_frame.pack(side=tk.TOP, fill=tk.X, pady=10)
+        self.top_frame = tk.Frame(self.root, bg="#111111", height=50)
+        self.top_frame.pack(side=tk.TOP, fill=tk.X)
+        self.top_frame.pack_propagate(False)
 
-        tk.Button(self.top_frame, text="< Back to Lobby", command=self.leave_room, bg="#333", fg="white", font=("Arial", 12)).pack(side=tk.LEFT, padx=10)
+        btn_style = {"bg": "#222", "fg": "gold", "font": ("Arial", 12, "bold"), "relief": tk.FLAT, "activebackground": "#333", "activeforeground": "gold"}
+        tk.Button(self.top_frame, text="❮ LOBBY", command=self.leave_room, **btn_style).pack(side=tk.LEFT, padx=10, pady=10)
+
+        self.top_canvas = tk.Canvas(self.top_frame, bg="#111111", height=50, width=400, highlightthickness=0)
+        self.top_canvas.pack(side=tk.RIGHT, padx=10)
 
         self.canvas = tk.Canvas(self.root, bg="#006600", width=1000, height=500, highlightthickness=0)
         self.canvas.pack(expand=True, fill=tk.BOTH)
@@ -1059,11 +951,7 @@ class BlackjackGUI:
         self.bottom_frame = tk.Frame(self.root, bg="#006600")
         self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=20)
 
-        self.balance_label = tk.Label(self.top_frame, text="", bg="#006600", fg="white", font=("Arial", 14, "bold"))
-        self.balance_label.pack(side=tk.LEFT, padx=20)
 
-        self.status_label = tk.Label(self.top_frame, text="Waiting for state...", bg="#006600", fg="yellow", font=("Arial", 14))
-        self.status_label.pack(side=tk.RIGHT, padx=20)
 
         self.bj_chip_canvas = tk.Canvas(self.bottom_frame, bg="#006600", width=600, height=80, highlightthickness=0)
         self.bj_chip_canvas.bind("<Button-1>", self.on_chip_select)
@@ -1071,13 +959,14 @@ class BlackjackGUI:
 
         self.bet_button = tk.Button(self.bottom_frame, text="Place Bet", font=("Arial", 16, "bold"), bg="gold", command=self.on_bj_bet)
 
-        self.hit_btn = tk.Button(self.bottom_frame, text="Hit", font=("Arial", 12), command=lambda: self.client.send_action("hit"))
-        self.stand_btn = tk.Button(self.bottom_frame, text="Stand", font=("Arial", 12), command=lambda: self.client.send_action("stand"))
-        self.double_btn = tk.Button(self.bottom_frame, text="Double", font=("Arial", 12), command=lambda: self.client.send_action("double"))
-        self.split_btn = tk.Button(self.bottom_frame, text="Split", font=("Arial", 12), command=lambda: self.client.send_action("split"))
-        self.ins_btn = tk.Button(self.bottom_frame, text="Insurance", font=("Arial", 12), command=lambda: self.client.send_action("insurance"))
+        btn_style = {"font": ("Arial", 14, "bold"), "bg": "#111", "fg": "white", "relief": tk.FLAT, "activebackground": "#333", "activeforeground": "gold"}
+        self.hit_btn = tk.Button(self.bottom_frame, text="HIT", command=lambda: self.client.send_action("hit"), **btn_style)
+        self.stand_btn = tk.Button(self.bottom_frame, text="STAND", command=lambda: self.client.send_action("stand"), **btn_style)
+        self.double_btn = tk.Button(self.bottom_frame, text="DOUBLE", command=lambda: self.client.send_action("double"), **btn_style)
+        self.split_btn = tk.Button(self.bottom_frame, text="SPLIT", command=lambda: self.client.send_action("split"), **btn_style)
+        self.ins_btn = tk.Button(self.bottom_frame, text="INSURANCE", command=lambda: self.client.send_action("insurance"), **btn_style)
 
-        self.start_round_btn = tk.Button(self.bottom_frame, text="Start New Round", font=("Arial", 12), command=lambda: self.client.send_action("start_round"))
+        self.start_round_btn = tk.Button(self.bottom_frame, text="START NEW ROUND", command=lambda: self.client.send_action("start_round"), bg="gold", fg="black", font=("Arial", 14, "bold"), relief=tk.FLAT)
 
     def on_bj_bet(self):
         amount = getattr(self, 'active_chip', 10)
@@ -1093,70 +982,19 @@ class BlackjackGUI:
 
     def draw_table(self):
         # Wooden floor background
-        self.canvas.create_rectangle(0, 0, 1000, 500, fill="#3d2314", outline="")
+        self.canvas.create_rectangle(0, 0, 1000, 500, fill="#2a1b12", outline="")
 
-        # Green casino table oval
-        self.canvas.create_oval(50, -250, 950, 480, fill="#006600", outline="#b8860b", width=10)
+        # Green casino table oval with shadow
+        self.canvas.create_oval(45, -245, 955, 485, fill="#0f0f0f", outline="")
+        self.canvas.create_oval(50, -250, 950, 480, fill="#005522", outline="#b8860b", width=8)
 
-        # Dealer area curved text
-        self.canvas.create_text(500, 170, text="BLACKJACK PAYS 3 TO 2", fill="#b8860b", font=("Arial", 16, "bold"))
-        self.canvas.create_text(500, 195, text="Dealer must draw to 16, and stand on all 17s", fill="#b8860b", font=("Arial", 12))
+        # Dealer area curved text moved up
+        self.canvas.create_text(500, 140, text="BLACKJACK PAYS 3 TO 2", fill="#b8860b", font=("Arial", 16, "bold"))
+        self.canvas.create_text(500, 160, text="Dealer must draw to 16, and stand on all 17s", fill="#b8860b", font=("Arial", 10))
 
         # Insurance line
-        self.canvas.create_arc(200, -100, 800, 300, start=180, extent=180, style=tk.ARC, outline="#b8860b", width=2)
-        self.canvas.create_text(500, 280, text="INSURANCE PAYS 2 TO 1", fill="#b8860b", font=("Arial", 14, "bold"))
-
-    def draw_chips(self, x, y, amount):
-        if amount <= 0: return
-
-        chip_denominations = [
-            (500, "#800080"), # Purple
-            (100, "#1a1a1a"), # Black
-            (25, "#008000"),  # Green
-            (10, "#0000FF"),  # Blue
-            (5, "#FF0000"),   # Red
-            (1, "#FFFFFF")    # White
-        ]
-
-        chips_to_draw = []
-        remaining = amount
-        for denom, color in chip_denominations:
-            count = int(remaining // denom)
-            for _ in range(count):
-                chips_to_draw.append((denom, color))
-            remaining %= denom
-
-        # Draw maximum 10 chips to not clutter the screen
-        # We want to keep the largest denominations (which are added first)
-        if len(chips_to_draw) > 10:
-            chips_to_draw = chips_to_draw[:10]
-
-        # Draw from bottom to top, meaning largest chips should be drawn first
-        chips_to_draw.reverse()
-
-        chip_width = 40
-        chip_height = 20
-        offset_y = 5
-
-        for i, (denom, color) in enumerate(chips_to_draw):
-            cy = y - (i * offset_y)
-            text_color = "black" if denom == 1 else "white"
-
-            # Outer ring
-            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1)
-            # Inner ring
-            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1)
-            # Dash pattern on the edge
-            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2)
-            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2)
-
-            # Value text
-            self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"))
-
-    def draw_card(self, x, y, card_dict, hidden=False):
-        width, height = 65, 95
-        # Card shadow
-        self.canvas.create_rectangle(x+3, y+3, x+width+3, y+height+3, fill="#111111", outline="")
+        self.canvas.create_arc(200, -120, 800, 260, start=180, extent=180, style=tk.ARC, outline="#b8860b", width=2)
+        self.canvas.create_text(500, 240, text="INSURANCE PAYS 2 TO 1", fill="#b8860b", font=("Arial", 12, "bold"))
 
         if hidden:
             # Card back
@@ -1236,6 +1074,49 @@ class BlackjackGUI:
         self.canvas.delete("all")
         self.draw_table()
 
+        if "history" in state and len(state["history"]) > 0:
+            # Semi-transparent box approximation
+            self.canvas.create_rectangle(10, 100, 200, 280, fill="#111111", outline="#b8860b", stipple="gray50")
+            self.canvas.create_text(105, 120, text="HAND HISTORY", fill="gold", font=("Arial", 10, "bold"))
+            for i, hist in enumerate(reversed(state["history"])):
+                color = "green" if "Win" in hist or "Blackjack" in hist else ("red" if "Lose" in hist or "Bust" in hist else "white")
+                self.canvas.create_text(105, 145 + (i * 25), text=hist, fill=color, font=("Arial", 10))
+
+        if state == "playing" and self.game_state["current_player_id"] == self.player_id:
+            # AI Advisor Logic (Basic Strategy)
+            curr_hand = me["hands"][0]
+            d_val = dealer["hand"]["visible_score"]
+            p_val = curr_hand["score"]
+
+            advice = "STAND"
+            if p_val <= 11: advice = "HIT"
+            elif p_val == 12 and 4 <= d_val <= 6: advice = "STAND"
+            elif p_val == 12: advice = "HIT"
+            elif 13 <= p_val <= 16 and d_val <= 6: advice = "STAND"
+            elif 13 <= p_val <= 16: advice = "HIT"
+
+            if len(curr_hand["cards"]) == 2:
+                if p_val == 11: advice = "DOUBLE"
+                elif p_val == 10 and d_val <= 9: advice = "DOUBLE"
+                elif p_val == 9 and 3 <= d_val <= 6: advice = "DOUBLE"
+
+            # Draw AI Advisor Panel
+            self.canvas.create_rectangle(780, 100, 980, 180, fill="#111111", outline="#00aaff", width=2)
+            self.canvas.create_text(880, 125, text="🤖 AI ADVISOR", fill="#00aaff", font=("Arial", 12, "bold"))
+            self.canvas.create_text(880, 155, text=f"Suggested: {advice}", fill="white", font=("Arial", 14, "bold"))
+
+
+        # Draw Premium Top Bar Avatar & Balance
+        if me and hasattr(self, 'top_canvas'):
+            self.top_canvas.delete("all")
+            # Draw Avatar Icon (Vector)
+            self.top_canvas.create_oval(10, 10, 40, 40, fill="#333", outline="gold")
+            self.top_canvas.create_oval(18, 15, 32, 29, fill="gray", outline="")
+            self.top_canvas.create_arc(12, 25, 38, 55, start=0, extent=180, fill="gray", outline="")
+
+            self.top_canvas.create_text(50, 25, text=me['name'], fill="white", font=("Arial", 14, "bold"), anchor="w")
+            self.top_canvas.create_text(200, 25, text=f"Balance: ${me['balance']}", fill="gold", font=("Arial", 14, "bold"), anchor="w")
+
         for widget in self.bottom_frame.winfo_children():
             widget.pack_forget()
 
@@ -1246,8 +1127,7 @@ class BlackjackGUI:
 
         if me:
             self.balance_label.config(text=f"{me['name']} | Balance: ${me['balance']}")
-            if self.status_label:
-                self.status_label.config(text="")
+
 
         if state == "waiting_for_players" or state == "game_over":
             self.start_round_btn.pack(side=tk.LEFT, padx=10)
@@ -1274,7 +1154,9 @@ class BlackjackGUI:
                 self.draw_card(dealer_x + i*70, 50, c, hidden)
 
             if dealer["show_hidden"]:
-                self.canvas.create_text(500, 160, text=f"Score: {dealer['hand']['score']}", fill="white")
+                self.canvas.create_text(500, 190, text=f"Dealer: {dealer['hand']['score']}", fill="white", font=("Arial", 14, "bold"))
+            elif len(dealer_cards) > 0:
+                self.canvas.create_text(500, 190, text=f"Dealer: {dealer['hand']['visible_score']}", fill="white", font=("Arial", 14, "bold"))
 
             num_players = len(self.game_state["player_order"])
             if num_players > 0:
@@ -1307,11 +1189,31 @@ class BlackjackGUI:
                             self.draw_card(cards_x + c_idx*40, hy, c)
 
             if state == "playing" and self.game_state["current_player_id"] == self.player_id:
-                self.hit_btn.pack(side=tk.LEFT, padx=5)
-                self.stand_btn.pack(side=tk.LEFT, padx=5)
-                self.double_btn.pack(side=tk.LEFT, padx=5)
-                self.split_btn.pack(side=tk.LEFT, padx=5)
-                self.ins_btn.pack(side=tk.LEFT, padx=5)
+                # Basic pack
+                self.hit_btn.pack(side=tk.LEFT, padx=10, pady=20)
+                self.stand_btn.pack(side=tk.LEFT, padx=10, pady=20)
+
+                # Logic checks
+                curr_hand = me["hands"][0] # simplified to first hand for ui check
+                dealer_visible = dealer["hand"]["visible_score"]
+
+                # Double
+                if len(curr_hand["cards"]) == 2:
+                    self.double_btn.pack(side=tk.LEFT, padx=10, pady=20)
+                else:
+                    self.double_btn.pack_forget()
+
+                # Split
+                if len(curr_hand["cards"]) == 2 and curr_hand["cards"][0]["rank"] == curr_hand["cards"][1]["rank"]:
+                    self.split_btn.pack(side=tk.LEFT, padx=10, pady=20)
+                else:
+                    self.split_btn.pack_forget()
+
+                # Insurance
+                if dealer_visible == 11 and len(curr_hand["cards"]) == 2:
+                    self.ins_btn.pack(side=tk.LEFT, padx=10, pady=20)
+                else:
+                    self.ins_btn.pack_forget()
 
 def main():
     root = tk.Tk()
