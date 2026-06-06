@@ -4,6 +4,7 @@ import os
 import uuid
 import socket
 import threading
+import math
 import tkinter as tk
 from tkinter import messagebox
 
@@ -396,7 +397,7 @@ class Game:
 class RouletteGame:
     def __init__(self, server):
         self.server = server
-        self.bets = {} # {pid: [{"type": "number_5", "amount": 10}, ...]}
+        self.bets = {} 
         self.last_result = None
         self.red_nums = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
 
@@ -430,7 +431,6 @@ class RouletteGame:
         return 0
 
     def spin(self):
-        import random
         number = random.randint(0, 36)
         if number == 0:
             result_color = "green"
@@ -466,7 +466,6 @@ class RouletteGame:
 # NETWORK
 # ==========================================
 
-
 class Server:
     def __init__(self, host='0.0.0.0'):
         self.host = host
@@ -474,13 +473,11 @@ class Server:
         self.server.bind((self.host, HOST_PORT))
         self.server.listen()
 
-        self.global_players = {} # {pid: {"name": name, "balance": 1000, "room": "lobby"}}
+        self.global_players = {} 
         self.blackjack_game = Game()
         self.blackjack_game.server = self
         self.roulette_game = RouletteGame(self)
-        # self.roulette_game = RouletteGame(self) # to be implemented
-
-        self.clients = {} # {client_socket: pid}
+        self.clients = {} 
 
     def start(self):
         threading.Thread(target=self.accept_clients, daemon=True).start()
@@ -491,11 +488,8 @@ class Server:
             threading.Thread(target=self.handle_client, args=(client,), daemon=True).start()
 
     def broadcast_state(self):
-        # We broadcast the blackjack state to all clients in blackjack room,
-        # and a general lobby state to lobby clients
         bj_state = self.blackjack_game.get_state()
 
-        # Override the players list in bj_state to use global balance
         for pid in bj_state["players"]:
             if pid in self.global_players:
                 bj_state["players"][pid]["balance"] = self.global_players[pid]["balance"]
@@ -508,10 +502,15 @@ class Server:
                 if room == "blackjack":
                     data = json.dumps({"type": "state", "data": bj_state}).encode('utf-8')
                     client.sendall(data + b"\n")
+                elif room == "roulette":
+                    r_state = self.roulette_game.get_state()
+                    r_state["players"] = {p_id: {"name": self.global_players[p_id]["name"], "balance": self.global_players[p_id]["balance"]} for p_id in self.global_players if self.global_players[p_id]["room"] == "roulette"}
+                    data = json.dumps({"type": "state", "data": r_state}).encode('utf-8')
+                    client.sendall(data + b"\n")
                 elif room == "lobby":
                     lobby_state = {
                         "state": "lobby",
-                        "players": {pid: {"name": self.global_players[pid]["name"], "balance": self.global_players[pid]["balance"]}}
+                        "players": {p_id: {"name": self.global_players[p_id]["name"], "balance": self.global_players[p_id]["balance"]} for p_id in self.global_players if self.global_players[p_id]["room"] == "lobby"}
                     }
                     data = json.dumps({"type": "state", "data": lobby_state}).encode('utf-8')
                     client.sendall(data + b"\n")
@@ -527,7 +526,6 @@ class Server:
                 name = msg["name"]
                 self.clients[client] = player_id
 
-                # Register globally if new
                 if player_id not in self.global_players:
                     self.global_players[player_id] = {"name": name, "balance": 1000, "room": "lobby"}
 
@@ -535,7 +533,7 @@ class Server:
                 self.broadcast_state()
 
             while True:
-                data = client.recv(1024)
+                data = client.recv(4096)
                 if not data:
                     break
                 messages = data.decode('utf-8').split('\n')
@@ -552,7 +550,6 @@ class Server:
                             self.global_players[pid]["room"] = room_name
                             if room_name == "blackjack":
                                 self.blackjack_game.add_player(pid, self.global_players[pid]["name"])
-                                # update local game balance
                                 self.blackjack_game.players[pid].balance = self.global_players[pid]["balance"]
 
                         elif action == "leave_room":
@@ -561,7 +558,6 @@ class Server:
                                 self.blackjack_game.remove_player(pid)
                             self.global_players[pid]["room"] = "lobby"
 
-                        # Route Blackjack actions
                         elif self.global_players[pid]["room"] == "blackjack":
                             if action == "bet":
                                 self.blackjack_game.place_bet(pid, msg["amount"])
@@ -582,22 +578,15 @@ class Server:
                             elif action == "start_round":
                                 self.blackjack_game.start_betting_phase()
 
-
                         elif self.global_players[pid]["room"] == "roulette":
                             if action == "r_bet":
                                 self.roulette_game.place_bet(pid, msg.get("amount", 10), msg.get("bet_type"))
                             elif action == "r_spin":
                                 self.roulette_game.spin()
 
-                            # broadcast roulette state is handled below
-
-                            # Sync balances back to global from game
-                            for p in self.blackjack_game.players.values():
-                                self.global_players[p.player_id]["balance"] = p.balance
-
                         self.broadcast_state()
         except Exception as e:
-            print("Client error:", e)
+            print("Server error:", e)
         finally:
             if client in self.clients:
                 pid = self.clients[client]
@@ -609,7 +598,44 @@ class Server:
                 self.broadcast_state()
             client.close()
 
+class Client:
+    def __init__(self, host, player_id, name):
+        self.host = host
+        self.port = HOST_PORT
+        self.player_id = player_id
+        self.name = name
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.on_state_update = None
 
+    def connect(self):
+        self.socket.connect((self.host, self.port))
+        join_msg = json.dumps({"type": "join", "player_id": self.player_id, "name": self.name})
+        self.socket.sendall(join_msg.encode('utf-8'))
+        threading.Thread(target=self.receive_messages, daemon=True).start()
+
+    def receive_messages(self):
+        buffer = ""
+        while True:
+            try:
+                data = self.socket.recv(4096).decode('utf-8')
+                if not data: break
+                buffer += data
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    if not line.strip(): continue
+                    msg = json.loads(line)
+                    if msg["type"] == "state" and self.on_state_update:
+                        self.on_state_update(msg["data"])
+            except:
+                break
+
+    def send_action(self, action, **kwargs):
+        msg = {"type": "action", "player_id": self.player_id, "action": action}
+        msg.update(kwargs)
+        try:
+            self.socket.sendall((json.dumps(msg) + "\n").encode('utf-8'))
+        except:
+            pass
 
 class LocalClient:
     def __init__(self, player_id, name):
@@ -618,7 +644,6 @@ class LocalClient:
         self.server = Server()
         self.on_state_update = None
         self.room = "lobby"
-
         self.server.global_players[player_id] = {"name": name, "balance": 1000, "room": "lobby"}
         self.server.clients["local_socket_mock"] = player_id
 
@@ -627,7 +652,6 @@ class LocalClient:
 
     def _trigger_update(self):
         if not self.on_state_update: return
-
         if self.room == "lobby":
             state = {
                 "state": "lobby",
@@ -639,27 +663,21 @@ class LocalClient:
         elif self.room == "roulette":
             state = self.server.roulette_game.get_state()
             state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
-        else:
-            state = {"state": "unknown", "players": {}}
-
         self.on_state_update(state)
 
     def send_action(self, action, **kwargs):
         pid = self.player_id
-
         if action == "join_room":
             self.room = kwargs.get("room")
             self.server.global_players[pid]["room"] = self.room
             if self.room == "blackjack":
                 self.server.blackjack_game.add_player(pid, self.name)
                 self.server.blackjack_game.players[pid].balance = self.server.global_players[pid]["balance"]
-
         elif action == "leave_room":
             if self.room == "blackjack":
                 self.server.blackjack_game.remove_player(pid)
             self.room = "lobby"
             self.server.global_players[pid]["room"] = "lobby"
-
         elif self.room == "blackjack":
             game = self.server.blackjack_game
             if action == "bet":
@@ -676,20 +694,16 @@ class LocalClient:
                 game.buy_insurance(pid)
             elif action == "start_round":
                 game.start_betting_phase()
-
             for p in game.players.values():
                 self.server.global_players[p.player_id]["balance"] = p.balance
-
         elif self.room == "roulette":
             game = self.server.roulette_game
             if action == "r_bet":
-                amount = int(kwargs.get("amount", 10))
-                bet_type = kwargs.get("bet_type")
-                game.place_bet(pid, amount, bet_type)
+                game.place_bet(pid, int(kwargs.get("amount", 10)), kwargs.get("bet_type"))
             elif action == "r_spin":
                 game.spin()
-
         self._trigger_update()
+
 # ==========================================
 # GUI
 # ==========================================
@@ -706,12 +720,9 @@ class BlackjackGUI:
         self.server = None
         self.game_state = None
         self.current_view = "lobby"
-        self.active_chip = 10 # Default chip selection
- ui-overhaul-783593155004330310
+        self.active_chip = 10 
         self.hand_history = []
         self.prev_state = None
-
- main
 
         self.setup_start_screen()
 
@@ -723,19 +734,15 @@ class BlackjackGUI:
         frame.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
         tk.Label(frame, text="Virtual Casino", font=("Arial", 36, "bold"), bg="#006600", fg="white").pack(pady=20)
-
         tk.Label(frame, text="Your Name:", font=("Arial", 14), bg="#006600", fg="white").pack()
         self.name_entry = tk.Entry(frame, font=("Arial", 14))
         self.name_entry.insert(0, "Player")
         self.name_entry.pack(pady=10)
 
         tk.Button(frame, text="Singleplayer", font=("Arial", 16), command=self.start_singleplayer, width=20, bg="#228B22", fg="white").pack(pady=10)
-
         tk.Frame(frame, height=2, bd=1, relief=tk.SUNKEN).pack(fill=tk.X, pady=15)
         tk.Label(frame, text="Multiplayer", font=("Arial", 18, "bold"), bg="#006600", fg="white").pack()
-
         tk.Button(frame, text="Host Game", font=("Arial", 16), command=self.host_game, width=20).pack(pady=10)
-
         tk.Label(frame, text="Or Join via IP:", font=("Arial", 14), bg="#006600", fg="white").pack(pady=(10, 5))
         self.ip_entry = tk.Entry(frame, font=("Arial", 14))
         self.ip_entry.insert(0, "127.0.0.1")
@@ -755,8 +762,7 @@ class BlackjackGUI:
         self.connect_client("127.0.0.1")
 
     def join_game(self):
-        ip = self.ip_entry.get()
-        self.connect_client(ip)
+        self.connect_client(self.ip_entry.get())
 
     def connect_client(self, ip):
         name = self.name_entry.get()
@@ -764,10 +770,9 @@ class BlackjackGUI:
         self.client.on_state_update = self.on_state_update
         try:
             self.client.connect()
-            self.setup_game_screen()
+            self.setup_lobby_screen()
         except Exception as e:
             messagebox.showerror("Connection Error", f"Failed to connect to {ip}\n{e}")
-
 
     def setup_lobby_screen(self):
         self.current_view = "lobby"
@@ -784,7 +789,6 @@ class BlackjackGUI:
         self.lobby_balance_label.pack(side=tk.RIGHT, padx=20, pady=10)
 
         tk.Label(self.lobby_frame, text="Select a Game", font=("Arial", 32, "bold"), fg="white", bg="#1a1a1a").pack(pady=50)
-
         games_frame = tk.Frame(self.lobby_frame, bg="#1a1a1a")
         games_frame.pack()
 
@@ -820,7 +824,6 @@ class BlackjackGUI:
         bottom_frame = tk.Frame(self.r_frame, bg="#005500")
         bottom_frame.pack(fill=tk.X, pady=10)
 
-        # Chip Bank Canvas
         self.r_chip_canvas = tk.Canvas(bottom_frame, bg="#005500", width=800, height=80, highlightthickness=0)
         self.r_chip_canvas.pack(side=tk.LEFT, padx=20)
         self.r_chip_canvas.bind("<Button-1>", self.on_chip_select)
@@ -836,72 +839,36 @@ class BlackjackGUI:
         self.is_spinning = False
         self.spin_angle = 0
 
-    def draw_chip_bank(self, canvas):
-        canvas.delete("all")
- ui-overhaul-783593155004330310
-        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
-        all_colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
-
-        balance = 0
-        if getattr(self, "game_state", None) and "players" in self.game_state and self.player_id in self.game_state["players"]:
+    def get_available_chips(self):
+        balance = 1000
+        if getattr(self, 'game_state', None) and "players" in self.game_state and self.player_id in self.game_state["players"]:
             balance = self.game_state["players"][self.player_id]["balance"]
 
-        denoms = [d for d in all_denoms if d <= balance or d == 1]
-        colors = [c for d, c in zip(all_denoms, all_colors) if d <= balance or d == 1]
+        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
+        all_colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
+        
+        available = [(d, c) for d, c in zip(all_denoms, all_colors) if d <= balance or d == 1]
+        return [x[0] for x in available], [x[1] for x in available]
 
-        denoms = [1, 5, 10, 25, 100, 500]
-        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
-main
+    def draw_chip_bank(self, canvas):
+        canvas.delete("all")
+        denoms, colors = self.get_available_chips()
 
         for i, (denom, color) in enumerate(zip(denoms, colors)):
             x = 40 + (i * 80)
             y = 40
 
             if denom == self.active_chip:
-                canvas.create_oval(x-25, y-25, x+25, y+25, outline="yellow", width=4, tags="ui")
+                canvas.create_oval(x-25, y-25, x+25, y+25, outline="yellow", width=4)
 
             text_color = "black" if denom == 1 else "white"
-            canvas.create_oval(x-20, y-20, x+20, y+20, fill=color, outline="white", width=2, tags=f"chip_{denom}")
-            canvas.create_oval(x-15, y-15, x+15, y+15, outline="white", width=1, tags=f"chip_{denom}")
-            canvas.create_text(x, y, text=str(denom), fill=text_color, font=("Arial", 10, "bold"), tags=f"chip_{denom}")
-
-    def animate_chip_throw(self, canvas, start_x, start_y, end_x, end_y, denom, color):
-        # Create a temporary chip
-        chip_id = canvas.create_oval(start_x-15, start_y-15, start_x+15, start_y+15, fill=color, outline="white", width=2, tags="flying_chip")
-        text_id = canvas.create_text(start_x, start_y, text=str(denom), fill=("black" if denom==1 else "white"), font=("Arial", 8, "bold"), tags="flying_chip")
-
-        steps = 15
-        dx = (end_x - start_x) / steps
-        dy = (end_y - start_y) / steps
-
-        def move(step):
-            if step < steps:
-                canvas.move(chip_id, dx, dy)
-                canvas.move(text_id, dx, dy)
-                self.root.after(20, lambda: move(step+1))
-            else:
-                canvas.delete(chip_id)
-                canvas.delete(text_id)
-                # the actual state update will draw the final chip
-                self.update_ui()
-
-        move(0)
+            canvas.create_oval(x-20, y-20, x+20, y+20, fill=color, outline="white", width=2)
+            canvas.create_oval(x-15, y-15, x+15, y+15, outline="white", width=1)
+            canvas.create_text(x, y, text=str(denom), fill=text_color, font=("Arial", 10, "bold"))
 
     def on_chip_select(self, event):
         x = event.x
- ui-overhaul-783593155004330310
-        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
-
-        balance = 0
-        if getattr(self, "game_state", None) and "players" in self.game_state and self.player_id in self.game_state["players"]:
-            balance = self.game_state["players"][self.player_id]["balance"]
-
-        denoms = [d for d in all_denoms if d <= balance or d == 1]
-
-
-        denoms = [1, 5, 10, 25, 100, 500]
-        # Calculate which chip was clicked based on x coordinate
-main
+        denoms, _ = self.get_available_chips()
         idx = int((x - 15) // 80)
         if 0 <= idx < len(denoms):
             self.active_chip = denoms[idx]
@@ -918,34 +885,26 @@ main
     def animate_spin(self):
         if not self.is_spinning: return
         self.spin_angle += 20
-        if self.spin_angle >= 360 * 3: # 3 full rotations
+        if self.spin_angle >= 360 * 3:
             self.is_spinning = False
-            self.update_ui() # Force final draw
+            self.update_ui()
             return
 
-        # Draw spinning ball
         self.r_canvas.delete("ball")
-        import math
         rad = math.radians(self.spin_angle)
         ball_x = 200 + (125 * math.cos(rad))
         ball_y = 225 - (125 * math.sin(rad))
         self.r_canvas.create_oval(ball_x-5, ball_y-5, ball_x+5, ball_y+5, fill="white", tags="ball")
-
         self.root.after(30, self.animate_spin)
 
     def draw_roulette_table(self):
         self.r_canvas.delete("all")
-
         self.r_canvas.create_rectangle(0, 0, 1000, 450, outline="#5c3a21", width=20)
 
-        # 1. Draw Wheel (Left side)
-        import math
         wheel_cx, wheel_cy = 200, 225
         r_outer, r_inner = 170, 110
         self.r_canvas.create_oval(wheel_cx - r_outer, wheel_cy - r_outer, wheel_cx + r_outer, wheel_cy + r_outer, outline="#b8860b", width=10, fill="#2a1b12")
-        self.r_canvas.create_oval(wheel_cx - r_inner, wheel_cy - r_inner, wheel_cx + r_inner, wheel_cy + r_inner, outline="#b8860b", width=4, fill="#1a1a1a")
 
-        # Draw wheel sectors
         wheel_nums = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
         angle_step = 360 / 37
         red_nums = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
@@ -954,62 +913,42 @@ main
             start_angle = i * angle_step
             color = "#008000" if num == 0 else ("#cc0000" if num in red_nums else "#1a1a1a")
             self.r_canvas.create_arc(wheel_cx - r_outer, wheel_cy - r_outer, wheel_cx + r_outer, wheel_cy + r_outer, start=start_angle, extent=angle_step, fill=color, outline="white")
-
-            # Draw number text
             mid_angle = math.radians(start_angle + (angle_step / 2))
             text_x = wheel_cx + (140 * math.cos(mid_angle))
-            text_y = wheel_cy - (140 * math.sin(mid_angle)) # Tkinter y is inverted
+            text_y = wheel_cy - (140 * math.sin(mid_angle))
             self.r_canvas.create_text(text_x, text_y, text=str(num), fill="white", font=("Arial", 8, "bold"))
 
         self.r_canvas.create_oval(wheel_cx - r_inner, wheel_cy - r_inner, wheel_cx + r_inner, wheel_cy + r_inner, outline="#b8860b", width=4, fill="#1a1a1a")
         self.r_canvas.create_text(wheel_cx, wheel_cy, text="ROULETTE", fill="#b8860b", font=("Arial", 16, "bold"))
 
-        # 2. Draw Betting Grid (Right side)
-        grid_start_x = 420
-        grid_start_y = 50
-        cell_w, cell_h = 35, 50
-
-        # Zero (Green)
+        grid_start_x, grid_start_y, cell_w, cell_h = 420, 50, 35, 50
         zx1, zy1, zx2, zy2 = grid_start_x, grid_start_y, grid_start_x + 40, grid_start_y + (cell_h * 3)
         self.r_canvas.create_rectangle(zx1, zy1, zx2, zy2, fill="#008000", outline="white")
         self.r_canvas.create_text((zx1+zx2)/2, (zy1+zy2)/2, text="0", fill="white", font=("Arial", 20, "bold"))
         self.roulette_grid_coords["number_0"] = (zx1, zy1, zx2, zy2)
 
-        # Numbers 1-36
         num = 1
         for col in range(12):
             for row in range(2, -1, -1):
                 x1 = grid_start_x + 40 + (col * cell_w)
                 y1 = grid_start_y + (row * cell_h)
-                x2 = x1 + cell_w
-                y2 = y1 + cell_h
-
+                x2, y2 = x1 + cell_w, y1 + cell_h
                 color = "#cc0000" if num in red_nums else "#1a1a1a"
                 self.r_canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="white")
                 self.r_canvas.create_text(x1 + cell_w/2, y1 + cell_h/2, text=str(num), fill="white", font=("Arial", 14, "bold"))
-
                 self.roulette_grid_coords[f"number_{num}"] = (x1, y1, x2, y2)
                 num += 1
 
-        # 2 to 1 columns
         col_x = grid_start_x + 40 + (12 * cell_w)
         for row in range(2, -1, -1):
-            x1 = col_x
-            y1 = grid_start_y + (row * cell_h)
-            x2 = x1 + 50
-            y2 = y1 + cell_h
+            x1, y1, x2, y2 = col_x, grid_start_y + (row * cell_h), col_x + 50, grid_start_y + (row * cell_h) + cell_h
             self.r_canvas.create_rectangle(x1, y1, x2, y2, fill="#005500", outline="white")
             self.r_canvas.create_text((x1+x2)/2, (y1+y2)/2, text="2 to 1", fill="white", font=("Arial", 10, "bold"))
             self.roulette_grid_coords[f"col_{3-row}"] = (x1, y1, x2, y2)
 
-        # Outside Bets
-        ox1 = grid_start_x + 40
-        oy1 = grid_start_y + (cell_h * 3)
-
+        ox1, oy1 = grid_start_x + 40, grid_start_y + (cell_h * 3)
         for i, text in enumerate(["1st 12", "2nd 12", "3rd 12"]):
-            x1 = ox1 + (i * cell_w * 4)
-            x2 = x1 + (cell_w * 4)
-            y2 = oy1 + 40
+            x1, x2, y2 = ox1 + (i * cell_w * 4), ox1 + (i * cell_w * 4) + (cell_w * 4), oy1 + 40
             self.r_canvas.create_rectangle(x1, oy1, x2, y2, fill="#005500", outline="white")
             self.r_canvas.create_text((x1+x2)/2, (oy1+y2)/2, text=text, fill="white", font=("Arial", 12, "bold"))
             self.roulette_grid_coords[f"dozen_{i+1}"] = (x1, oy1, x2, y2)
@@ -1017,13 +956,21 @@ main
         oy2 = oy1 + 40
         halves = [("1 to 18", "#005500"), ("EVEN", "#005500"), ("RED", "#cc0000"), ("BLACK", "#1a1a1a"), ("ODD", "#005500"), ("19 to 36", "#005500")]
         for i, (text, color) in enumerate(halves):
-            x1 = ox1 + (i * cell_w * 2)
-            x2 = x1 + (cell_w * 2)
-            y2 = oy2 + 40
+            x1, x2, y2 = ox1 + (i * cell_w * 2), ox1 + (i * cell_w * 2) + (cell_w * 2), oy2 + 40
             self.r_canvas.create_rectangle(x1, oy2, x2, y2, fill=color, outline="white")
             self.r_canvas.create_text((x1+x2)/2, (oy2+y2)/2, text=text, fill="white", font=("Arial", 12, "bold"))
             self.roulette_grid_coords[f"half_{text.replace(' ', '_')}"] = (x1, oy2, x2, y2)
 
+        if self.game_state.get("last_result") and not getattr(self, 'is_spinning', False):
+            res = self.game_state["last_result"]
+            win_num = res['number']
+            if win_num in wheel_nums:
+                idx = wheel_nums.index(win_num)
+                start_angle = idx * angle_step
+                mid_angle = math.radians(start_angle + (angle_step / 2))
+                ball_x = wheel_cx + (125 * math.cos(mid_angle))
+                ball_y = wheel_cy - (125 * math.sin(mid_angle))
+                self.r_canvas.create_oval(ball_x-6, ball_y-6, ball_x+6, ball_y+6, fill="white", outline="black", width=1, tags="ball")
 
     def on_roulette_hover(self, event):
         x, y = event.x, event.y
@@ -1032,10 +979,9 @@ main
             if x1 <= x <= x2 and y1 <= y <= y2:
                 new_hover = bet_key
                 break
-
         if new_hover != self.hovered_bet_key:
             self.hovered_bet_key = new_hover
-            self.update_ui() # force redraw to show/hide highlight
+            self.update_ui()
 
     def on_roulette_leave(self, event):
         if self.hovered_bet_key is not None:
@@ -1049,16 +995,9 @@ main
 
         for bet_key, (x1, y1, x2, y2) in self.roulette_grid_coords.items():
             if x1 <= x <= x2 and y1 <= y <= y2:
-                # Trigger action
                 self.client.send_action("r_bet", bet_type=bet_key, amount=amount)
-
-                # Determine color for chip
-                denoms = [1, 5, 10, 25, 100, 500]
-                colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+                denoms, colors = self.get_available_chips()
                 color = colors[denoms.index(amount)] if amount in denoms else "blue"
-
-                # Animate from bottom to click pos
-                # Since chip bank is in a different frame, we approximate start coords relative to canvas
                 self.animate_chip_throw(self.r_canvas, x, 450, x, y, amount, color)
                 break
 
@@ -1067,7 +1006,6 @@ main
         self.setup_lobby_screen()
 
     def on_state_update(self, state):
-
         self.game_state = state
         self.root.after(0, self.update_ui)
 
@@ -1077,7 +1015,6 @@ main
 
         self.top_frame = tk.Frame(self.root, bg="#006600")
         self.top_frame.pack(side=tk.TOP, fill=tk.X, pady=10)
-
         tk.Button(self.top_frame, text="< Back to Lobby", command=self.leave_room, bg="#333", fg="white", font=("Arial", 12)).pack(side=tk.LEFT, padx=10)
 
         self.canvas = tk.Canvas(self.root, bg="#006600", width=1000, height=500, highlightthickness=0)
@@ -1103,132 +1040,68 @@ main
         self.double_btn = tk.Button(self.bottom_frame, text="Double", font=("Arial", 12), command=lambda: self.client.send_action("double"))
         self.split_btn = tk.Button(self.bottom_frame, text="Split", font=("Arial", 12), command=lambda: self.client.send_action("split"))
         self.ins_btn = tk.Button(self.bottom_frame, text="Insurance", font=("Arial", 12), command=lambda: self.client.send_action("insurance"))
-
         self.start_round_btn = tk.Button(self.bottom_frame, text="Start New Round", font=("Arial", 12), command=lambda: self.client.send_action("start_round"))
 
     def on_bj_bet(self):
         amount = getattr(self, 'active_chip', 10)
         self.client.send_action("bet", amount=amount)
-
-        # Animate chip flight to center
- ui-overhaul-783593155004330310
-        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
-        all_colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
-
-        balance = 0
-        if getattr(self, "game_state", None) and "players" in self.game_state and self.player_id in self.game_state["players"]:
-            balance = self.game_state["players"][self.player_id]["balance"]
-
-        denoms = [d for d in all_denoms if d <= balance or d == 1]
-        colors = [c for d, c in zip(all_denoms, all_colors) if d <= balance or d == 1]
-
-        denoms = [1, 5, 10, 25, 100, 500]
-        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
- main
+        denoms, colors = self.get_available_chips()
         color = colors[denoms.index(amount)] if amount in denoms else "blue"
-
-        # Approx start from bottom center, end at canvas center
         self.animate_chip_throw(self.canvas, 500, 500, 500, 250, amount, color)
 
     def draw_table(self):
-        # Wooden floor background
-        self.canvas.create_rectangle(0, 0, 1000, 500, fill="#3d2314", outline="")
-
-        # Green casino table oval
-        self.canvas.create_oval(50, -250, 950, 480, fill="#006600", outline="#b8860b", width=10)
-
-        # Dealer area curved text
-        self.canvas.create_text(500, 170, text="BLACKJACK PAYS 3 TO 2", fill="#b8860b", font=("Arial", 16, "bold"))
-        self.canvas.create_text(500, 195, text="Dealer must draw to 16, and stand on all 17s", fill="#b8860b", font=("Arial", 12))
-
-        # Insurance line
-        self.canvas.create_arc(200, -100, 800, 300, start=180, extent=180, style=tk.ARC, outline="#b8860b", width=2)
-        self.canvas.create_text(500, 280, text="INSURANCE PAYS 2 TO 1", fill="#b8860b", font=("Arial", 14, "bold"))
+        self.canvas.create_rectangle(0, 0, 1000, 500, fill="#3d2314", outline="", tags="bg_table")
+        self.canvas.create_oval(50, -250, 950, 480, fill="#006600", outline="#b8860b", width=10, tags="bg_table")
+        self.canvas.create_text(500, 170, text="BLACKJACK PAYS 3 TO 2", fill="#b8860b", font=("Arial", 16, "bold"), tags="bg_table")
+        self.canvas.create_text(500, 195, text="Dealer must draw to 16, and stand on all 17s", fill="#b8860b", font=("Arial", 12), tags="bg_table")
+        self.canvas.create_arc(200, -100, 800, 300, start=180, extent=180, style=tk.ARC, outline="#b8860b", width=2, tags="bg_table")
+        self.canvas.create_text(500, 280, text="INSURANCE PAYS 2 TO 1", fill="#b8860b", font=("Arial", 14, "bold"), tags="bg_table")
 
     def draw_chips(self, x, y, amount):
         if amount <= 0: return
-
         chip_denominations = [
-            (10000, "#D4AF37"), # Gold
-            (5000, "#FF00FF"),  # Magenta
-            (1000, "#00FFFF"),  # Cyan
-            (500, "#800080"),   # Purple
-            (100, "#1a1a1a"),   # Black
-            (25, "#008000"),    # Green
-            (10, "#0000FF"),    # Blue
-            (5, "#FF0000"),     # Red
-            (1, "#FFFFFF")      # White
+            (10000, "#D4AF37"), (5000, "#FF00FF"), (1000, "#00FFFF"),
+            (500, "#800080"), (100, "#1a1a1a"), (25, "#008000"),
+            (10, "#0000FF"), (5, "#FF0000"), (1, "#FFFFFF")
         ]
-
         chips_to_draw = []
         remaining = amount
         for denom, color in chip_denominations:
             count = int(remaining // denom)
-            for _ in range(count):
-                chips_to_draw.append((denom, color))
+            for _ in range(count): chips_to_draw.append((denom, color))
             remaining %= denom
 
-        # Draw maximum 10 chips to not clutter the screen
-        # We want to keep the largest denominations (which are added first)
-        if len(chips_to_draw) > 10:
-            chips_to_draw = chips_to_draw[:10]
-
-        # Draw from bottom to top, meaning largest chips should be drawn first
+        if len(chips_to_draw) > 10: chips_to_draw = chips_to_draw[:10]
         chips_to_draw.reverse()
 
-        chip_width = 40
-        chip_height = 20
-        offset_y = 5
-
+        chip_width, chip_height, offset_y = 40, 20, 5
         for i, (denom, color) in enumerate(chips_to_draw):
             cy = y - (i * offset_y)
             text_color = "black" if denom == 1 else "white"
-
-            # Outer ring
-            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1)
-            # Inner ring
-            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1)
-            # Dash pattern on the edge
-            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2)
-            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2)
-
-            # Value text
- ui-overhaul-783593155004330310
+            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1, tags="dynamic")
+            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1, tags="dynamic")
+            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2, tags="dynamic")
+            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2, tags="dynamic")
             self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"), tags=("dynamic", "chip_text"))
-
+        
         self.canvas.tag_raise("chip_text")
-
-            self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"))
- main
 
     def draw_card(self, x, y, card_dict, hidden=False):
         width, height = 65, 95
-        # Card shadow
-        self.canvas.create_rectangle(x+3, y+3, x+width+3, y+height+3, fill="#111111", outline="")
-
+        self.canvas.create_rectangle(x+3, y+3, x+width+3, y+height+3, fill="#111111", outline="", tags="dynamic")
         if hidden:
-            # Card back
-            self.canvas.create_rectangle(x, y, x+width, y+height, fill="#003366", outline="white", width=2)
-            # Pattern on back
+            self.canvas.create_rectangle(x, y, x+width, y+height, fill="#003366", outline="white", width=2, tags="dynamic")
             for i in range(5, width-5, 10):
-                self.canvas.create_line(x+i, y+5, x+i, y+height-5, fill="#005599", width=2)
-            self.canvas.create_oval(x+15, y+30, x+width-15, y+height-30, outline="white", width=2)
+                self.canvas.create_line(x+i, y+5, x+i, y+height-5, fill="#005599", width=2, tags="dynamic")
+            self.canvas.create_oval(x+15, y+30, x+width-15, y+height-30, outline="white", width=2, tags="dynamic")
         else:
-            # Card face
-            self.canvas.create_rectangle(x, y, x+width, y+height, fill="white", outline="#333333", width=1)
+            self.canvas.create_rectangle(x, y, x+width, y+height, fill="white", outline="#333333", width=1, tags="dynamic")
             color = "#cc0000" if card_dict["suit"] in ['♥', '♦'] else "black"
-
-            # Rank top-left
-            self.canvas.create_text(x+12, y+15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"))
-            self.canvas.create_text(x+12, y+30, text=card_dict["suit"], fill=color, font=("Arial", 12))
-
-            # Center suit (large)
-            self.canvas.create_text(x+width/2, y+height/2, text=card_dict["suit"], fill=color, font=("Arial", 28))
-
-            # Rank bottom-right
-            self.canvas.create_text(x+width-12, y+height-30, text=card_dict["suit"], fill=color, font=("Arial", 12))
-            self.canvas.create_text(x+width-12, y+height-15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"))
-
+            self.canvas.create_text(x+12, y+15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"), tags="dynamic")
+            self.canvas.create_text(x+12, y+30, text=card_dict["suit"], fill=color, font=("Arial", 12), tags="dynamic")
+            self.canvas.create_text(x+width/2, y+height/2, text=card_dict["suit"], fill=color, font=("Arial", 28), tags="dynamic")
+            self.canvas.create_text(x+width-12, y+height-30, text=card_dict["suit"], fill=color, font=("Arial", 12), tags="dynamic")
+            self.canvas.create_text(x+width-12, y+height-15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"), tags="dynamic")
 
     def update_ui(self):
         if not self.game_state: return
@@ -1242,81 +1115,55 @@ main
                 self.lobby_balance_label.config(text=f"Balance: ${me['balance']}")
             return
 
-
         if self.current_view == "roulette":
             if me and hasattr(self, 'r_balance_label'):
                 self.r_balance_label.config(text=f"Balance: ${me['balance']}")
-
             if not getattr(self, 'is_spinning', False):
                 self.draw_roulette_table()
-
-                # Draw hover highlight
                 if getattr(self, 'hovered_bet_key', None) and self.hovered_bet_key in self.roulette_grid_coords:
                     x1, y1, x2, y2 = self.roulette_grid_coords[self.hovered_bet_key]
                     self.r_canvas.create_rectangle(x1, y1, x2, y2, outline="yellow", width=4, tags="hover_box")
-
                 if self.game_state.get("last_result"):
                     res = self.game_state["last_result"]
                     self.r_canvas.create_text(200, 225, text=str(res['number']), fill="white", font=("Arial", 36, "bold"))
                     self.r_canvas.create_text(200, 260, text=res['color'].upper(), fill=res['color'], font=("Arial", 14, "bold"))
-
-                    # Highlight winning number cell
                     if f"number_{res['number']}" in self.roulette_grid_coords:
                         x1, y1, x2, y2 = self.roulette_grid_coords[f"number_{res['number']}"]
                         self.r_canvas.create_rectangle(x1, y1, x2, y2, outline="yellow", width=4)
-
                 if "active_bets" in self.game_state:
                     for pid, player_bets in self.game_state["active_bets"].items():
                         for bet in player_bets:
                             if bet["type"] in self.roulette_grid_coords:
                                 x1, y1, x2, y2 = self.roulette_grid_coords[bet["type"]]
                                 cx, cy = (x1+x2)/2, (y1+y2)/2
-
-                                # Draw chip
                                 self.r_canvas.create_oval(cx-15, cy-15, cx+15, cy+15, fill="blue", outline="white", width=2)
-                                self.r_canvas.create_oval(cx-10, cy-10, cx+10, cy+10, outline="white", width=1)
                                 self.r_canvas.create_text(cx, cy, text=str(bet["amount"]), fill="white", font=("Arial", 8, "bold"))
             return
 
-        if self.current_view != "blackjack":
-            return
+        if self.current_view != "blackjack": return
 
- ui-overhaul-783593155004330310
         self.canvas.delete("dynamic")
-
-        self.canvas.delete("all")
- main
         self.draw_table()
 
-        for widget in self.bottom_frame.winfo_children():
-            widget.pack_forget()
+        for widget in self.bottom_frame.winfo_children(): widget.pack_forget()
 
-
-        state = self.game_state["state"]
-        players = self.game_state["players"]
-        me = players.get(self.player_id)
-
-        if me:
-            self.balance_label.config(text=f"{me['name']} | Balance: ${me['balance']}")
-            if self.status_label:
-                self.status_label.config(text="")
-
-        if state == "waiting_for_players" or state == "game_over":
-            self.start_round_btn.pack(side=tk.LEFT, padx=10)
+        if me: self.balance_label.config(text=f"{me['name']} | Balance: ${me['balance']}")
+        if state in ["waiting_for_players", "game_over"]: self.start_round_btn.pack(side=tk.LEFT, padx=10)
 
         if state == "betting":
             if me and me["state"] == "betting":
-                self.canvas.create_text(500, 250, text="Place your bet", fill="white", font=("Arial", 24, "bold"))
+                self.canvas.create_text(500, 250, text="Place your bet", fill="white", font=("Arial", 24, "bold"), tags="dynamic")
                 self.bj_chip_canvas.pack(side=tk.LEFT, padx=10)
                 self.draw_chip_bank(self.bj_chip_canvas)
-
-
                 self.bet_button.pack(side=tk.LEFT, padx=10)
             else:
-                self.canvas.create_text(500, 250, text="Waiting for others to bet...", fill="white", font=("Arial", 24))
+                self.canvas.create_text(500, 250, text="Waiting for others to bet...", fill="white", font=("Arial", 24), tags="dynamic")
+        else:
+            if hasattr(self, 'bj_chip_canvas'): self.bj_chip_canvas.pack_forget()
+            if hasattr(self, 'bet_button'): self.bet_button.pack_forget()
 
         if state in ["playing", "dealer_turn", "game_over"]:
-            self.canvas.create_text(500, 30, text="Dealer", fill="white", font=("Arial", 16))
+            self.canvas.create_text(500, 30, text="Dealer", fill="white", font=("Arial", 16), tags="dynamic")
             dealer = self.game_state["dealer"]
             dealer_cards = dealer["hand"]["cards"]
             dealer_x = 500 - (len(dealer_cards) * 35)
@@ -1326,7 +1173,7 @@ main
                 self.draw_card(dealer_x + i*70, 50, c, hidden)
 
             if dealer["show_hidden"]:
-                self.canvas.create_text(500, 160, text=f"Score: {dealer['hand']['score']}", fill="white")
+                self.canvas.create_text(500, 160, text=f"Score: {dealer['hand']['score']}", fill="white", tags="dynamic")
 
             num_players = len(self.game_state["player_order"])
             if num_players > 0:
@@ -1337,19 +1184,8 @@ main
 
                     is_current = (self.game_state["current_player_id"] == pid and state == "playing")
                     if is_current:
-                        self.canvas.create_rectangle(center_x-120, 200, center_x+120, 450, outline="yellow", width=3)
-
-                    self.canvas.create_text(center_x, 220, text=f"{p['name']} (${p['balance']})", fill="white", font=("Arial", 14, "bold"))
-
-                    if p["message"]:
-                        msg_color = "gold" if "Win" in p["message"] or "Blackjack" in p["message"] else ("red" if "Lose" in p["message"] or "Bust" in p["message"] else "white")
-                        self.canvas.create_text(center_x, 350, text=p["message"], fill=msg_color, font=("Arial", 28, "bold"), tags="result_msg")
-
-ui-overhaul-783593155004330310
-                    if is_current:
-                        # AI Advisor
-                        adv_x = 850
-                        adv_y = 150
+                        self.canvas.create_rectangle(center_x-120, 200, center_x+120, 450, outline="yellow", width=3, tags="dynamic")
+                        adv_x, adv_y = 850, 150
                         self.canvas.create_rectangle(adv_x, adv_y, adv_x+130, adv_y+80, fill="#1a1a1a", outline="#b8860b", width=2, tags="dynamic")
                         self.canvas.create_text(adv_x+65, adv_y+20, text="🤖 AI Advisor", fill="#b8860b", font=("Arial", 12, "bold"), tags="dynamic")
 
@@ -1357,61 +1193,39 @@ ui-overhaul-783593155004330310
                         try:
                             if p.get("hands") and len(p["hands"]) > 0 and dealer.get("hand") and dealer["hand"].get("cards"):
                                 player_score = p["hands"][p["current_hand_idx"]]["score"]
-                                dealer_visible_card = dealer["hand"]["cards"][0]
-                                d_rank = dealer_visible_card["rank"]
-                                d_val = 11 if d_rank == "A" else (10 if d_rank in ["J", "Q", "K"] else int(d_rank))
-
-                                if player_score < 12:
-                                    suggestion = "HIT"
-                                elif player_score == 12 and d_val in [2,3,4,5,6]:
-                                    suggestion = "STAND"
-                                elif player_score in [13, 14, 15, 16] and d_val in [2,3,4,5,6]:
-                                    suggestion = "STAND"
-                                elif player_score >= 17:
-                                    suggestion = "STAND"
-                                else:
-                                    suggestion = "HIT"
-                        except Exception:
-                            pass
-
+                                d_val = Card.from_dict(dealer["hand"]["cards"][0]).get_value()
+                                suggestion = "HIT" if player_score < 17 else "STAND"
+                        except: pass
                         self.canvas.create_text(adv_x+65, adv_y+50, text=f"Suggested: {suggestion}", fill="white", font=("Arial", 10), tags="dynamic")
 
- main
+                    self.canvas.create_text(center_x, 220, text=f"{p['name']} (${p['balance']})", fill="white", font=("Arial", 14, "bold"), tags="dynamic")
+
+                    if p["message"]:
+                        msg_color = "gold" if "Win" in p["message"] or "Blackjack" in p["message"] else ("red" if "Lose" in p["message"] or "Bust" in p["message"] else "white")
+                        self.canvas.create_text(center_x, 350, text=p["message"], fill=msg_color, font=("Arial", 28, "bold"), tags=("dynamic", "result_msg"))
+
                     for h_idx, h in enumerate(p["hands"]):
                         hy = 250 + (h_idx * 110)
-                        self.canvas.create_text(center_x, hy-15, text=f"Bet: ${h['bet']} | Score: {h['score']}", fill="white")
-
-                        if h['bet'] > 0:
-                            # Draw chips significantly to the left of the cards
-                            self.draw_chips(center_x - 100, hy + 40, h['bet'])
-
-                        # Draw cards centered
+                        self.canvas.create_text(center_x, hy-15, text=f"Bet: ${h['bet']} | Score: {h['score']}", fill="white", tags="dynamic")
+                        if h['bet'] > 0: self.draw_chips(center_x - 100, hy + 40, h['bet'])
                         cards_x = center_x - (len(h["cards"]) * 20)
                         for c_idx, c in enumerate(h["cards"]):
                             self.draw_card(cards_x + c_idx*40, hy, c)
- ui-overhaul-783593155004330310
 
             if self.prev_state in ["playing", "dealer_turn"] and state == "game_over":
                 if me and me.get("message"):
                     msg = me.get("message", "").strip()
-                    if "Win" in msg or "Blackjack" in msg: outcome = "Win"
-                    elif "Lose" in msg or "Bust" in msg: outcome = "Loss"
-                    else: outcome = "Push"
+                    outcome = "Win" if "Win" in msg or "Blackjack" in msg else ("Loss" if "Lose" in msg or "Bust" in msg else "Push")
                     self.hand_history.insert(0, outcome)
                     self.hand_history = self.hand_history[:5]
 
             self.prev_state = state
-
-            # Draw History Panel
-            hist_x = 20
-            hist_y = 150
+            hist_x, hist_y = 20, 150
             self.canvas.create_rectangle(hist_x, hist_y, hist_x+100, hist_y+150, fill="#1a1a1a", outline="#b8860b", width=2, tags="dynamic")
             self.canvas.create_text(hist_x+50, hist_y+20, text="HISTORY", fill="#b8860b", font=("Arial", 10, "bold"), tags="dynamic")
             for i, res in enumerate(self.hand_history):
                 color = "green" if res == "Win" else ("red" if res == "Loss" else "white")
                 self.canvas.create_text(hist_x+50, hist_y+50 + (i*20), text=res, fill=color, font=("Arial", 10, "bold"), tags="dynamic")
-
- main
 
             if state == "playing" and self.game_state["current_player_id"] == self.player_id:
                 self.hit_btn.pack(side=tk.LEFT, padx=5)
@@ -1421,10 +1235,8 @@ ui-overhaul-783593155004330310
                 self.ins_btn.pack(side=tk.LEFT, padx=5)
 
         self.canvas.tag_lower("bg_table")
-        self.canvas.tag_raise("card")
         self.canvas.tag_raise("dynamic")
-        if self.canvas.find_withtag("result_msg"):
-            self.canvas.tag_raise("result_msg")
+        if self.canvas.find_withtag("result_msg"): self.canvas.tag_raise("result_msg")
 
 def main():
     root = tk.Tk()
