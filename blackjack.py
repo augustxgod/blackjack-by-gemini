@@ -707,8 +707,11 @@ class BlackjackGUI:
         self.game_state = None
         self.current_view = "lobby"
         self.active_chip = 10 # Default chip selection
+ ui-overhaul-783593155004330310
         self.hand_history = []
         self.prev_state = None
+
+ main
 
         self.setup_start_screen()
 
@@ -835,6 +838,7 @@ class BlackjackGUI:
 
     def draw_chip_bank(self, canvas):
         canvas.delete("all")
+ ui-overhaul-783593155004330310
         all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
         all_colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
 
@@ -844,6 +848,10 @@ class BlackjackGUI:
 
         denoms = [d for d in all_denoms if d <= balance or d == 1]
         colors = [c for d, c in zip(all_denoms, all_colors) if d <= balance or d == 1]
+
+        denoms = [1, 5, 10, 25, 100, 500]
+        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+main
 
         for i, (denom, color) in enumerate(zip(denoms, colors)):
             x = 40 + (i * 80)
@@ -881,6 +889,7 @@ class BlackjackGUI:
 
     def on_chip_select(self, event):
         x = event.x
+ ui-overhaul-783593155004330310
         all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
 
         balance = 0
@@ -889,6 +898,10 @@ class BlackjackGUI:
 
         denoms = [d for d in all_denoms if d <= balance or d == 1]
 
+
+        denoms = [1, 5, 10, 25, 100, 500]
+        # Calculate which chip was clicked based on x coordinate
+main
         idx = int((x - 15) // 80)
         if 0 <= idx < len(denoms):
             self.active_chip = denoms[idx]
@@ -1098,6 +1111,7 @@ class BlackjackGUI:
         self.client.send_action("bet", amount=amount)
 
         # Animate chip flight to center
+ ui-overhaul-783593155004330310
         all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
         all_colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
 
@@ -1107,6 +1121,10 @@ class BlackjackGUI:
 
         denoms = [d for d in all_denoms if d <= balance or d == 1]
         colors = [c for d, c in zip(all_denoms, all_colors) if d <= balance or d == 1]
+
+        denoms = [1, 5, 10, 25, 100, 500]
+        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+ main
         color = colors[denoms.index(amount)] if amount in denoms else "blue"
 
         # Approx start from bottom center, end at canvas center
@@ -1167,17 +1185,21 @@ class BlackjackGUI:
             text_color = "black" if denom == 1 else "white"
 
             # Outer ring
-            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1, tags="dynamic")
+            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1)
             # Inner ring
-            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1, tags="dynamic")
+            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1)
             # Dash pattern on the edge
-            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2, tags="dynamic")
-            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2, tags="dynamic")
+            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2)
+            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2)
 
             # Value text
+ ui-overhaul-783593155004330310
             self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"), tags=("dynamic", "chip_text"))
 
         self.canvas.tag_raise("chip_text")
+
+            self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"))
+ main
 
     def draw_card(self, x, y, card_dict, hidden=False):
         width, height = 65, 95
@@ -1259,7 +1281,11 @@ class BlackjackGUI:
         if self.current_view != "blackjack":
             return
 
+ ui-overhaul-783593155004330310
         self.canvas.delete("dynamic")
+
+        self.canvas.delete("all")
+ main
         self.draw_table()
 
         for widget in self.bottom_frame.winfo_children():
@@ -1319,6 +1345,7 @@ class BlackjackGUI:
                         msg_color = "gold" if "Win" in p["message"] or "Blackjack" in p["message"] else ("red" if "Lose" in p["message"] or "Bust" in p["message"] else "white")
                         self.canvas.create_text(center_x, 350, text=p["message"], fill=msg_color, font=("Arial", 28, "bold"), tags="result_msg")
 
+ui-overhaul-783593155004330310
                     if is_current:
                         # AI Advisor
                         adv_x = 850
@@ -1349,6 +1376,7 @@ class BlackjackGUI:
 
                         self.canvas.create_text(adv_x+65, adv_y+50, text=f"Suggested: {suggestion}", fill="white", font=("Arial", 10), tags="dynamic")
 
+ main
                     for h_idx, h in enumerate(p["hands"]):
                         hy = 250 + (h_idx * 110)
                         self.canvas.create_text(center_x, hy-15, text=f"Bet: ${h['bet']} | Score: {h['score']}", fill="white")
@@ -1361,6 +1389,7 @@ class BlackjackGUI:
                         cards_x = center_x - (len(h["cards"]) * 20)
                         for c_idx, c in enumerate(h["cards"]):
                             self.draw_card(cards_x + c_idx*40, hy, c)
+ ui-overhaul-783593155004330310
 
             if self.prev_state in ["playing", "dealer_turn"] and state == "game_over":
                 if me and me.get("message"):
@@ -1381,6 +1410,8 @@ class BlackjackGUI:
             for i, res in enumerate(self.hand_history):
                 color = "green" if res == "Win" else ("red" if res == "Loss" else "white")
                 self.canvas.create_text(hist_x+50, hist_y+50 + (i*20), text=res, fill=color, font=("Arial", 10, "bold"), tags="dynamic")
+
+ main
 
             if state == "playing" and self.game_state["current_player_id"] == self.player_id:
                 self.hit_btn.pack(side=tk.LEFT, padx=5)
