@@ -707,6 +707,11 @@ class BlackjackGUI:
         self.game_state = None
         self.current_view = "lobby"
         self.active_chip = 10 # Default chip selection
+ ui-overhaul-783593155004330310
+        self.hand_history = []
+        self.prev_state = None
+
+ main
 
         self.setup_start_screen()
 
@@ -816,7 +821,7 @@ class BlackjackGUI:
         bottom_frame.pack(fill=tk.X, pady=10)
 
         # Chip Bank Canvas
-        self.r_chip_canvas = tk.Canvas(bottom_frame, bg="#005500", width=600, height=80, highlightthickness=0)
+        self.r_chip_canvas = tk.Canvas(bottom_frame, bg="#005500", width=800, height=80, highlightthickness=0)
         self.r_chip_canvas.pack(side=tk.LEFT, padx=20)
         self.r_chip_canvas.bind("<Button-1>", self.on_chip_select)
 
@@ -833,16 +838,27 @@ class BlackjackGUI:
 
     def draw_chip_bank(self, canvas):
         canvas.delete("all")
+ ui-overhaul-783593155004330310
+        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
+        all_colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
+
+        balance = 0
+        if getattr(self, "game_state", None) and "players" in self.game_state and self.player_id in self.game_state["players"]:
+            balance = self.game_state["players"][self.player_id]["balance"]
+
+        denoms = [d for d in all_denoms if d <= balance or d == 1]
+        colors = [c for d, c in zip(all_denoms, all_colors) if d <= balance or d == 1]
+
         denoms = [1, 5, 10, 25, 100, 500]
         colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+main
 
         for i, (denom, color) in enumerate(zip(denoms, colors)):
             x = 40 + (i * 80)
             y = 40
 
-            # Highlight active chip
             if denom == self.active_chip:
-                canvas.create_oval(x-25, y-25, x+25, y+25, outline="yellow", width=4)
+                canvas.create_oval(x-25, y-25, x+25, y+25, outline="yellow", width=4, tags="ui")
 
             text_color = "black" if denom == 1 else "white"
             canvas.create_oval(x-20, y-20, x+20, y+20, fill=color, outline="white", width=2, tags=f"chip_{denom}")
@@ -873,8 +889,19 @@ class BlackjackGUI:
 
     def on_chip_select(self, event):
         x = event.x
+ ui-overhaul-783593155004330310
+        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
+
+        balance = 0
+        if getattr(self, "game_state", None) and "players" in self.game_state and self.player_id in self.game_state["players"]:
+            balance = self.game_state["players"][self.player_id]["balance"]
+
+        denoms = [d for d in all_denoms if d <= balance or d == 1]
+
+
         denoms = [1, 5, 10, 25, 100, 500]
         # Calculate which chip was clicked based on x coordinate
+main
         idx = int((x - 15) // 80)
         if 0 <= idx < len(denoms):
             self.active_chip = denoms[idx]
@@ -1065,7 +1092,7 @@ class BlackjackGUI:
         self.status_label = tk.Label(self.top_frame, text="Waiting for state...", bg="#006600", fg="yellow", font=("Arial", 14))
         self.status_label.pack(side=tk.RIGHT, padx=20)
 
-        self.bj_chip_canvas = tk.Canvas(self.bottom_frame, bg="#006600", width=600, height=80, highlightthickness=0)
+        self.bj_chip_canvas = tk.Canvas(self.bottom_frame, bg="#006600", width=800, height=80, highlightthickness=0)
         self.bj_chip_canvas.bind("<Button-1>", self.on_chip_select)
         self.draw_chip_bank(self.bj_chip_canvas)
 
@@ -1084,8 +1111,20 @@ class BlackjackGUI:
         self.client.send_action("bet", amount=amount)
 
         # Animate chip flight to center
+ ui-overhaul-783593155004330310
+        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
+        all_colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
+
+        balance = 0
+        if getattr(self, "game_state", None) and "players" in self.game_state and self.player_id in self.game_state["players"]:
+            balance = self.game_state["players"][self.player_id]["balance"]
+
+        denoms = [d for d in all_denoms if d <= balance or d == 1]
+        colors = [c for d, c in zip(all_denoms, all_colors) if d <= balance or d == 1]
+
         denoms = [1, 5, 10, 25, 100, 500]
         colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080"]
+ main
         color = colors[denoms.index(amount)] if amount in denoms else "blue"
 
         # Approx start from bottom center, end at canvas center
@@ -1110,12 +1149,15 @@ class BlackjackGUI:
         if amount <= 0: return
 
         chip_denominations = [
-            (500, "#800080"), # Purple
-            (100, "#1a1a1a"), # Black
-            (25, "#008000"),  # Green
-            (10, "#0000FF"),  # Blue
-            (5, "#FF0000"),   # Red
-            (1, "#FFFFFF")    # White
+            (10000, "#D4AF37"), # Gold
+            (5000, "#FF00FF"),  # Magenta
+            (1000, "#00FFFF"),  # Cyan
+            (500, "#800080"),   # Purple
+            (100, "#1a1a1a"),   # Black
+            (25, "#008000"),    # Green
+            (10, "#0000FF"),    # Blue
+            (5, "#FF0000"),     # Red
+            (1, "#FFFFFF")      # White
         ]
 
         chips_to_draw = []
@@ -1151,7 +1193,13 @@ class BlackjackGUI:
             self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2)
 
             # Value text
+ ui-overhaul-783593155004330310
+            self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"), tags=("dynamic", "chip_text"))
+
+        self.canvas.tag_raise("chip_text")
+
             self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"))
+ main
 
     def draw_card(self, x, y, card_dict, hidden=False):
         width, height = 65, 95
@@ -1233,7 +1281,11 @@ class BlackjackGUI:
         if self.current_view != "blackjack":
             return
 
+ ui-overhaul-783593155004330310
+        self.canvas.delete("dynamic")
+
         self.canvas.delete("all")
+ main
         self.draw_table()
 
         for widget in self.bottom_frame.winfo_children():
@@ -1293,6 +1345,38 @@ class BlackjackGUI:
                         msg_color = "gold" if "Win" in p["message"] or "Blackjack" in p["message"] else ("red" if "Lose" in p["message"] or "Bust" in p["message"] else "white")
                         self.canvas.create_text(center_x, 350, text=p["message"], fill=msg_color, font=("Arial", 28, "bold"), tags="result_msg")
 
+ui-overhaul-783593155004330310
+                    if is_current:
+                        # AI Advisor
+                        adv_x = 850
+                        adv_y = 150
+                        self.canvas.create_rectangle(adv_x, adv_y, adv_x+130, adv_y+80, fill="#1a1a1a", outline="#b8860b", width=2, tags="dynamic")
+                        self.canvas.create_text(adv_x+65, adv_y+20, text="🤖 AI Advisor", fill="#b8860b", font=("Arial", 12, "bold"), tags="dynamic")
+
+                        suggestion = "STAND"
+                        try:
+                            if p.get("hands") and len(p["hands"]) > 0 and dealer.get("hand") and dealer["hand"].get("cards"):
+                                player_score = p["hands"][p["current_hand_idx"]]["score"]
+                                dealer_visible_card = dealer["hand"]["cards"][0]
+                                d_rank = dealer_visible_card["rank"]
+                                d_val = 11 if d_rank == "A" else (10 if d_rank in ["J", "Q", "K"] else int(d_rank))
+
+                                if player_score < 12:
+                                    suggestion = "HIT"
+                                elif player_score == 12 and d_val in [2,3,4,5,6]:
+                                    suggestion = "STAND"
+                                elif player_score in [13, 14, 15, 16] and d_val in [2,3,4,5,6]:
+                                    suggestion = "STAND"
+                                elif player_score >= 17:
+                                    suggestion = "STAND"
+                                else:
+                                    suggestion = "HIT"
+                        except Exception:
+                            pass
+
+                        self.canvas.create_text(adv_x+65, adv_y+50, text=f"Suggested: {suggestion}", fill="white", font=("Arial", 10), tags="dynamic")
+
+ main
                     for h_idx, h in enumerate(p["hands"]):
                         hy = 250 + (h_idx * 110)
                         self.canvas.create_text(center_x, hy-15, text=f"Bet: ${h['bet']} | Score: {h['score']}", fill="white")
@@ -1305,6 +1389,29 @@ class BlackjackGUI:
                         cards_x = center_x - (len(h["cards"]) * 20)
                         for c_idx, c in enumerate(h["cards"]):
                             self.draw_card(cards_x + c_idx*40, hy, c)
+ ui-overhaul-783593155004330310
+
+            if self.prev_state in ["playing", "dealer_turn"] and state == "game_over":
+                if me and me.get("message"):
+                    msg = me.get("message", "").strip()
+                    if "Win" in msg or "Blackjack" in msg: outcome = "Win"
+                    elif "Lose" in msg or "Bust" in msg: outcome = "Loss"
+                    else: outcome = "Push"
+                    self.hand_history.insert(0, outcome)
+                    self.hand_history = self.hand_history[:5]
+
+            self.prev_state = state
+
+            # Draw History Panel
+            hist_x = 20
+            hist_y = 150
+            self.canvas.create_rectangle(hist_x, hist_y, hist_x+100, hist_y+150, fill="#1a1a1a", outline="#b8860b", width=2, tags="dynamic")
+            self.canvas.create_text(hist_x+50, hist_y+20, text="HISTORY", fill="#b8860b", font=("Arial", 10, "bold"), tags="dynamic")
+            for i, res in enumerate(self.hand_history):
+                color = "green" if res == "Win" else ("red" if res == "Loss" else "white")
+                self.canvas.create_text(hist_x+50, hist_y+50 + (i*20), text=res, fill=color, font=("Arial", 10, "bold"), tags="dynamic")
+
+ main
 
             if state == "playing" and self.game_state["current_player_id"] == self.player_id:
                 self.hit_btn.pack(side=tk.LEFT, padx=5)
@@ -1312,6 +1419,12 @@ class BlackjackGUI:
                 self.double_btn.pack(side=tk.LEFT, padx=5)
                 self.split_btn.pack(side=tk.LEFT, padx=5)
                 self.ins_btn.pack(side=tk.LEFT, padx=5)
+
+        self.canvas.tag_lower("bg_table")
+        self.canvas.tag_raise("card")
+        self.canvas.tag_raise("dynamic")
+        if self.canvas.find_withtag("result_msg"):
+            self.canvas.tag_raise("result_msg")
 
 def main():
     root = tk.Tk()
