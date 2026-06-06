@@ -821,7 +821,7 @@ class BlackjackGUI:
         bottom_frame.pack(fill=tk.X, pady=10)
 
         # Chip Bank Canvas
-        self.r_chip_canvas = tk.Canvas(bottom_frame, bg="#005500", width=600, height=80, highlightthickness=0)
+        self.r_chip_canvas = tk.Canvas(bottom_frame, bg="#005500", width=800, height=80, highlightthickness=0)
         self.r_chip_canvas.pack(side=tk.LEFT, padx=20)
         self.r_chip_canvas.bind("<Button-1>", self.on_chip_select)
 
@@ -838,8 +838,21 @@ class BlackjackGUI:
 
     def draw_chip_bank(self, canvas):
         canvas.delete("all")
-        denoms = [1, 5, 10, 25, 100, 500, 1000]
-        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF"]
+        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
+        all_colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
+
+        # Determine player balance
+        balance = 0
+        if self.game_state and "players" in self.game_state and self.player_id in self.game_state["players"]:
+            balance = self.game_state["players"][self.player_id]["balance"]
+
+        # Filter available denoms
+        denoms = []
+        colors = []
+        for d, c in zip(all_denoms, all_colors):
+            if d <= balance or d == 1: # Always show at least 1
+                denoms.append(d)
+                colors.append(c)
 
         for i, (denom, color) in enumerate(zip(denoms, colors)):
             x = 40 + (i * 80)
@@ -878,7 +891,14 @@ class BlackjackGUI:
 
     def on_chip_select(self, event):
         x = event.x
-        denoms = [1, 5, 10, 25, 100, 500, 1000]
+        all_denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
+
+        balance = 0
+        if getattr(self, 'game_state', None) and "players" in self.game_state and self.player_id in self.game_state["players"]:
+            balance = self.game_state["players"][self.player_id]["balance"]
+
+        denoms = [d for d in all_denoms if d <= balance or d == 1]
+
         idx = int((x - 15) // 80)
         if 0 <= idx < len(denoms):
             self.active_chip = denoms[idx]
@@ -1092,7 +1112,7 @@ class BlackjackGUI:
         self.status_label = tk.Label(self.top_frame, text="Waiting for state...", bg="#006600", fg="yellow", font=("Arial", 14))
         self.status_label.pack(side=tk.RIGHT, padx=20)
 
-        self.bj_chip_canvas = tk.Canvas(self.bottom_frame, bg="#006600", width=600, height=80, highlightthickness=0)
+        self.bj_chip_canvas = tk.Canvas(self.bottom_frame, bg="#006600", width=800, height=80, highlightthickness=0)
         self.bj_chip_canvas.bind("<Button-1>", self.on_chip_select)
         self.draw_chip_bank(self.bj_chip_canvas)
 
@@ -1112,8 +1132,8 @@ class BlackjackGUI:
         self.client.send_action("bet", amount=amount)
 
         # Animate chip flight to center
-        denoms = [1, 5, 10, 25, 100, 500, 1000]
-        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF"]
+        denoms = [1, 5, 10, 25, 100, 500, 1000, 5000, 10000]
+        colors = ["#FFFFFF", "#FF0000", "#0000FF", "#008000", "#1a1a1a", "#800080", "#00FFFF", "#FF00FF", "#D4AF37"]
         color = colors[denoms.index(amount)] if amount in denoms else "blue"
 
         # Approx start from bottom center, end at canvas center
@@ -1150,12 +1170,15 @@ class BlackjackGUI:
         if amount <= 0: return
 
         chip_denominations = [
-            (500, "#800080"), # Purple
-            (100, "#1a1a1a"), # Black
-            (25, "#008000"),  # Green
-            (10, "#0000FF"),  # Blue
-            (5, "#FF0000"),   # Red
-            (1, "#FFFFFF")    # White
+            (10000, "#D4AF37"), # Gold
+            (5000, "#FF00FF"),  # Magenta
+            (1000, "#00FFFF"),  # Cyan
+            (500, "#800080"),   # Purple
+            (100, "#1a1a1a"),   # Black
+            (25, "#008000"),    # Green
+            (10, "#0000FF"),    # Blue
+            (5, "#FF0000"),     # Red
+            (1, "#FFFFFF")      # White
         ]
 
         chips_to_draw = []
@@ -1183,49 +1206,52 @@ class BlackjackGUI:
             text_color = "black" if denom == 1 else "white"
 
             # Drop shadow
-            self.canvas.create_oval(x, cy+2, x + chip_width, cy + chip_height+2, fill="#111111", outline="", stipple="gray50", tags=("dynamic", "ui_panel"))
+            self.canvas.create_oval(x, cy+2, x + chip_width, cy + chip_height+2, fill="#111111", outline="", stipple="gray50", tags="dynamic")
             # Outer ring
-            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1, tags=("dynamic", "ui_panel"))
+            self.canvas.create_oval(x, cy, x + chip_width, cy + chip_height, fill=color, outline="black", width=1, tags="dynamic")
             # Inner ring
-            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1, tags=("dynamic", "ui_panel"))
+            self.canvas.create_oval(x + 5, cy + 3, x + chip_width - 5, cy + chip_height - 3, outline="black", width=1, tags="dynamic")
             # Dash pattern on the edge
-            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2, tags=("dynamic", "ui_panel"))
-            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2, tags=("dynamic", "ui_panel"))
+            self.canvas.create_line(x+5, cy+chip_height/2, x+10, cy+chip_height/2, fill="white", width=2, tags="dynamic")
+            self.canvas.create_line(x+chip_width-10, cy+chip_height/2, x+chip_width-5, cy+chip_height/2, fill="white", width=2, tags="dynamic")
 
             # Value text
-            self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, tags="dynamic", font=("Arial", 8, "bold"))
+            self.canvas.create_text(x + chip_width/2, cy + chip_height/2, text=str(denom), fill=text_color, font=("Arial", 8, "bold"), tags=("dynamic", "chip_text"))
+
+        # Fix Text Disappearing
+        self.canvas.tag_raise("chip_text")
 
     def draw_card(self, x, y, card_dict, hidden=False):
         width, height = 65, 95
         # Card shadow - multiple layers for softer shadow
-        self.canvas.create_rectangle(x+5, y+5, x+width+5, y+height+5, fill="#0d1f0d", outline="", stipple="gray50", tags=("dynamic", "ui_panel"))
-        self.canvas.create_rectangle(x+2, y+2, x+width+2, y+height+2, fill="#111111", outline="", tags=("dynamic", "ui_panel"))
+        self.canvas.create_rectangle(x+5, y+5, x+width+5, y+height+5, fill="#0d1f0d", outline="", stipple="gray50", tags=("dynamic", "card"))
+        self.canvas.create_rectangle(x+2, y+2, x+width+2, y+height+2, fill="#111111", outline="", tags=("dynamic", "card"))
 
         if hidden:
             # Card back
-            self.canvas.create_rectangle(x, y, x+width, y+height, fill="#003366", outline="white", width=2, tags=("dynamic", "ui_panel"))
+            self.canvas.create_rectangle(x, y, x+width, y+height, fill="#003366", outline="white", width=2, tags=("dynamic", "card"))
             # Pattern on back
             for i in range(5, width-5, 10):
-                self.canvas.create_line(x+i, y+5, x+i, y+height-5, fill="#005599", width=2, tags=("dynamic", "ui_panel"))
-            self.canvas.create_oval(x+15, y+30, x+width-15, y+height-30, outline="white", width=2, tags=("dynamic", "ui_panel"))
+                self.canvas.create_line(x+i, y+5, x+i, y+height-5, fill="#005599", width=2, tags=("dynamic", "card"))
+            self.canvas.create_oval(x+15, y+30, x+width-15, y+height-30, outline="white", width=2, tags=("dynamic", "card"))
         else:
             # Card face
-            self.canvas.create_rectangle(x, y, x+width, y+height, fill="white", outline="#333333", width=1, tags=("dynamic", "ui_panel"))
+            self.canvas.create_rectangle(x, y, x+width, y+height, fill="white", outline="#333333", width=1, tags=("dynamic", "card"))
             # Subtle paper texture
             for i in range(2, width, 4):
-                self.canvas.create_line(x+i, y+1, x+i, y+height-1, fill="#f9f9f9", width=1, tags=("dynamic", "ui_panel"))
+                self.canvas.create_line(x+i, y+1, x+i, y+height-1, fill="#f9f9f9", width=1, tags=("dynamic", "card"))
             color = "#cc0000" if card_dict["suit"] in ['♥', '♦'] else "black"
 
             # Rank top-left
-            self.canvas.create_text(x+12, y+15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"), tags=("dynamic", "ui_panel"))
-            self.canvas.create_text(x+12, y+30, text=card_dict["suit"], fill=color, font=("Arial", 12), tags=("dynamic", "ui_panel"))
+            self.canvas.create_text(x+12, y+15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"), tags=("dynamic", "card"))
+            self.canvas.create_text(x+12, y+30, text=card_dict["suit"], fill=color, font=("Arial", 12), tags=("dynamic", "card"))
 
             # Center suit (large)
-            self.canvas.create_text(x+width/2, y+height/2, text=card_dict["suit"], fill=color, font=("Arial", 28), tags=("dynamic", "ui_panel"))
+            self.canvas.create_text(x+width/2, y+height/2, text=card_dict["suit"], fill=color, font=("Arial", 28), tags=("dynamic", "card"))
 
             # Rank bottom-right
-            self.canvas.create_text(x+width-12, y+height-30, text=card_dict["suit"], fill=color, font=("Arial", 12), tags=("dynamic", "ui_panel"))
-            self.canvas.create_text(x+width-12, y+height-15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"), tags=("dynamic", "ui_panel"))
+            self.canvas.create_text(x+width-12, y+height-30, text=card_dict["suit"], fill=color, font=("Arial", 12), tags=("dynamic", "card"))
+            self.canvas.create_text(x+width-12, y+height-15, text=card_dict["rank"], fill=color, font=("Arial", 12, "bold"), tags=("dynamic", "card"))
 
 
 
@@ -1484,18 +1510,11 @@ class BlackjackGUI:
                 self.split_btn.pack(side=tk.LEFT, padx=5)
                 self.ins_btn.pack(side=tk.LEFT, padx=5)
 
-        # Z-Index Polish
-        # Keep background at the bottom
         self.canvas.tag_lower("bg_table")
-
-        # Ensure selection border is below the UI plates but above the table
-        self.canvas.tag_lower("selection_border", "ui_plate")
-
-        # Raise dynamic cards, chips, and UI panels to the top
         self.canvas.tag_raise("card")
-        self.canvas.tag_raise("chip_dynamic")
-        self.canvas.tag_raise("ui_panel")
-        self.canvas.tag_raise("ui_panel_text")
+        self.canvas.tag_raise("dynamic")
+        if self.canvas.find_withtag("result_msg"):
+            self.canvas.tag_raise("result_msg")
 
 def main():
     root = tk.Tk()
