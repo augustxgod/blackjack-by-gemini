@@ -930,8 +930,8 @@ class BlackjackGUI:
         self.s_canvas.delete("all")
 
         # Draw Neon Frame
-        self.s_canvas.create_rectangle(150, 50, 850, 350, fill="#222", outline="#8B008B", width=10)
-        self.s_canvas.create_rectangle(170, 70, 830, 330, fill="#111", outline="#FF00FF", width=4)
+        self.s_canvas.create_rectangle(150, 50, 970, 350, fill="#222", outline="#8B008B", width=10)
+        self.s_canvas.create_rectangle(170, 70, 950, 330, fill="#111", outline="#FF00FF", width=4)
         self.s_canvas.create_text(500, 100, text="NEON SLOTS", fill="#FF00FF", font=("Arial", 28, "bold"))
 
         # Draw 3 Reels
