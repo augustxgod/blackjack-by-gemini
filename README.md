@@ -36,7 +36,3 @@ The transition to the Qt6 rendering system introduced massive upgrades across th
 | **Desktop Integration** | Mouse-only navigation with a persistent, distracting background command console window. | **Native Feel**. Fully bound keyboard shortcuts (H, S, Space, Enter), console window suppression via `pythonw.exe`, and runtime-rendered taskbar icons. |
 
 ---
- jules-achievements-system-7182464259711722883
-=======
-
-
