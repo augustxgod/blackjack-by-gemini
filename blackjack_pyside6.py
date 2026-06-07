@@ -1268,6 +1268,11 @@ class LocalClient:
                 self.server.blackjack_game.remove_player(pid)
             self.room = "lobby"
             self.server.global_players[pid]["room"] = "lobby"
+        elif action == "claim_welfare":
+            if self.server.global_players[pid]["balance"] <= 0:
+                self.server.global_players[pid]["balance"] = 1000
+                if pid in self.server.blackjack_game.players:
+                    self.server.blackjack_game.players[pid].balance = 1000
         elif self.room == "blackjack":
             game = self.server.blackjack_game
             if action == "bet":
