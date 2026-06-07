@@ -2065,11 +2065,11 @@ class LobbyScreen(QWidget):
         bl.addStretch(1)
         bl.addWidget(self.balance_lbl)
         bl.addSpacing(12)
-
+        
         achv_btn = make_button("🏆 ACHIEVEMENTS", "gold", lambda: [self.app.achievements.refresh(), self.app.stack.setCurrentWidget(self.app.achievements)])
         bl.addWidget(achv_btn)
         bl.addSpacing(12)
-
+        
         bl.addWidget(sound_toggle_button(self.app))
         root.addWidget(bar)
 
@@ -3217,10 +3217,10 @@ class AchievementsScreen(QWidget):
         body = QVBoxLayout()
         body.setAlignment(Qt.AlignCenter)
         body.setSpacing(28)
-
+        
         self.grid = QGridLayout()
         self.grid.setSpacing(24)
-
+        
         gw = QWidget()
         gw.setLayout(self.grid)
         body.addWidget(gw, 0, Qt.AlignCenter)
@@ -3242,13 +3242,13 @@ class AchievementsScreen(QWidget):
             ("natural_21", "Natural 21", "Get a natural Blackjack on deal"),
             ("phoenix", "Phoenix", "Go broke to $0, get welfare bonus, and reach $5,000+")
         ]
-
+        
         row, col = 0, 0
         for key, title, desc in achievements_data:
             unlocked = self.app.profile.achievements.get(key, False)
             tile = QFrame()
             tile.setFixedSize(290, 140)
-
+            
             if unlocked:
                 tile.setStyleSheet("border-radius:20px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #A07A1E,stop:1 #7A5A12); border: 2px solid #E9C46A;")
             else:
@@ -3256,29 +3256,29 @@ class AchievementsScreen(QWidget):
                 eff = QGraphicsOpacityEffect(tile)
                 eff.setOpacity(0.6)
                 tile.setGraphicsEffect(eff)
-
+                
             shadow(tile, blur=20, dy=6)
             v = QVBoxLayout(tile)
             v.setAlignment(Qt.AlignCenter)
             v.setSpacing(8)
-
+            
             t = QLabel(title)
             t.setAlignment(Qt.AlignCenter)
             t.setStyleSheet(f"background:transparent; color:{'#fff' if unlocked else '#8A909A'}; font-size:22px; font-weight:800; letter-spacing:1px;")
-
+            
             s = QLabel(desc)
             s.setAlignment(Qt.AlignCenter)
             s.setWordWrap(True)
             s.setStyleSheet(f"background:transparent; color:{'rgba(255,255,255,0.9)' if unlocked else '#5b5f66'}; font-size:12px;")
-
+            
             status = QLabel("🏆 Unlocked!" if unlocked else "🔒 Locked")
             status.setAlignment(Qt.AlignCenter)
             status.setStyleSheet(f"background:transparent; color:{'#FFD700' if unlocked else '#5b5f66'}; font-size:14px; font-weight:700; margin-top:5px;")
-
+            
             v.addWidget(t)
             v.addWidget(s)
             v.addWidget(status)
-
+            
             self.grid.addWidget(tile, row, col)
             col += 1
             if col > 2:
@@ -3415,7 +3415,7 @@ class CasinoApp(QMainWindow):
     # -- state routing (runs on the GUI thread) ------------------------------
     def on_state(self, state):
         self.game_state = state
-
+        
         # Check balances for phoenix achievement and welfare
         me = state.get("players", {}).get(self.player_id)
         if me:
@@ -3423,10 +3423,10 @@ class CasinoApp(QMainWindow):
             if bal <= 0:
                 self.send_action("claim_welfare")
                 self.profile.welfare_claimed = True
-
+            
             if self.profile.welfare_claimed and bal >= 5000:
                 self.profile.unlock("phoenix", self)
-
+                
         s = state.get("state")
         if s == "lobby":
             self.stack.setCurrentWidget(self.lobby)
@@ -3458,7 +3458,7 @@ class CasinoApp(QMainWindow):
         from PySide6.QtWidgets import QGraphicsOpacityEffect
         name = names.get(key, key)
         self.sound.play("jackpot")
-
+        
         lbl = QLabel(f"🏆 Achievement Unlocked: {name}!", self)
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setStyleSheet("color:#E9C46A; font-size:22px; font-weight:800; background:rgba(0,0,0,0.8); border: 2px solid #E9C46A; border-radius: 12px; padding: 10px;")
@@ -3470,7 +3470,7 @@ class CasinoApp(QMainWindow):
 
         eff = QGraphicsOpacityEffect(lbl)
         lbl.setGraphicsEffect(eff)
-
+        
         a_op = QPropertyAnimation(eff, b"opacity", lbl)
         a_op.setDuration(4000)
         a_op.setKeyValueAt(0.0, 0.0)
@@ -3485,7 +3485,7 @@ class CasinoApp(QMainWindow):
         a_pos.setKeyValueAt(0.8, QPoint(x, 20))
         a_pos.setEndValue(QPoint(x, -50))
         a_pos.setEasingCurve(QEasingCurve.OutCubic)
-
+        
         a_op.finished.connect(lbl.deleteLater)
         a_op.start(QPropertyAnimation.DeleteWhenStopped)
         a_pos.start(QPropertyAnimation.DeleteWhenStopped)
