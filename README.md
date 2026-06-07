@@ -37,12 +37,4 @@ The transition to the Qt6 rendering system introduced massive upgrades across th
 
 ---
 
-## 🛠 Installation & Setup
 
-1. Clone the repository to your machine:
-   ```bash
-  git clone https://github.com/augustxgod/blackjack-by-gemini.git
-  2 Install the required Qt 6 bindings:
-   pip install PySide6
-   3 Launch the game client
-   python blackjack_pyside6.py
