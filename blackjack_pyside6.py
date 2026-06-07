@@ -14,6 +14,7 @@ thread.
 import sys
 import os
 import math
+import time
 import json
 import uuid
 import wave
@@ -996,9 +997,138 @@ class PokerRoom:
         return self.tables[pid]
 
 
+
+
+# ==========================================================================
+# CRASH GAME
+# ==========================================================================
+
+class CrashGame:
+    def __init__(self, server):
+        self.server = server
+        self.state = "waiting_for_bets"
+        self.bets = {}        # pid -> {"amount": int, "cashed_out": bool, "won": int}
+        self.crash_point = 1.0
+        self.current_multiplier = 1.0
+        self.ticks = 0
+        self.history = []     # last 5 crash points
+        self._loop_thread = None
+        self._stop_event = threading.Event()
+
+    def place_bet(self, pid, amount):
+        if self.state != "waiting_for_bets":
+            return False
+        gp = self.server.global_players.get(pid)
+        if not gp or gp["balance"] < amount or amount <= 0:
+            return False
+        gp["balance"] -= amount
+        self.bets[pid] = {"amount": amount, "cashed_out": False, "won": 0}
+
+        # In a real game, this might wait for more players. For now, auto-start after 2 seconds
+        # if the thread is not already queued to start.
+        if self._loop_thread is None or not self._loop_thread.is_alive():
+            self._start_delay()
+
+        return True
+
+    def _start_delay(self):
+        if self._loop_thread and self._loop_thread.is_alive():
+            return
+        self._loop_thread = threading.Thread(target=self._flight_loop, daemon=True)
+        self._loop_thread.start()
+
+    def _flight_loop(self):
+        # 2-second betting window
+        time.sleep(2)
+
+        if self.state != "waiting_for_bets":
+            return
+
+        self.state = "flying"
+        import random
+        e = 0.99
+        u = random.random()
+        if u == 0: u = 0.0001
+        self.crash_point = max(1.00, e / u)
+        self.current_multiplier = 1.00
+        self.ticks = 0
+
+        # Broadcast the flight start immediately
+        try:
+            self.server.broadcast_state()
+        except Exception: pass
+
+        while self.state == "flying":
+            time.sleep(0.033) # ~30 ticks per sec
+            self.ticks += 1
+            self.current_multiplier = 1.01 ** self.ticks
+
+            if self.current_multiplier >= self.crash_point:
+                self.trigger_crash()
+                break
+
+            # Broadcast the updated multiplier periodically
+            if self.ticks % 3 == 0:
+                try:
+                    self.server.broadcast_state()
+                except Exception: pass
+
+    def cashout(self, pid):
+        if self.state != "flying":
+            return False
+        bet_info = self.bets.get(pid)
+        if not bet_info or bet_info["cashed_out"]:
+            return False
+
+        # Lock in win at the current server-side multiplier
+        win_amount = int(bet_info["amount"] * self.current_multiplier)
+        bet_info["cashed_out"] = True
+        bet_info["won"] = win_amount
+
+        gp = self.server.global_players.get(pid)
+        if gp:
+            gp["balance"] += win_amount
+        return True
+
+    def trigger_crash(self):
+        if self.state != "flying":
+            return
+        self.state = "crashed"
+        self.history.insert(0, round(self.crash_point, 2))
+        self.history = self.history[:5]
+
+        try:
+            self.server.broadcast_state()
+        except Exception: pass
+
+        # Auto-reset after 3 seconds
+        time.sleep(3)
+        self.reset()
+
+    def reset(self):
+        self.state = "waiting_for_bets"
+        self.bets = {}
+        self.crash_point = 1.0
+        self.current_multiplier = 1.0
+        self.ticks = 0
+        try:
+            self.server.broadcast_state()
+        except Exception: pass
+
+    def get_state(self):
+        return {
+            "state": self.state,
+            "bets": self.bets,
+            "crash_point": self.crash_point,
+            "current_multiplier": self.current_multiplier,
+            "history": self.history
+        }
+
+
 # ==========================================================================
 # NETWORK  (unchanged from the original game)
 # ==========================================================================
+
 
 class Server:
     def __init__(self, host='0.0.0.0'):
@@ -1013,6 +1143,7 @@ class Server:
         self.roulette_game = RouletteGame(self)
         self.slots_game = SlotsGame(self)
         self.poker_room = PokerRoom(self)
+        self.crash_game = CrashGame(self)
         self.clients = {}
 
     def start(self):
@@ -1050,6 +1181,11 @@ class Server:
                     p_state = self.poker_room.table_for(pid).get_state()
                     p_state["players"] = {pid: {"name": self.global_players[pid]["name"], "balance": self.global_players[pid]["balance"]}}
                     data = json.dumps({"type": "state", "data": p_state}).encode('utf-8')
+                    client.sendall(data + b"\n")
+                elif room == "crash":
+                    c_state = self.crash_game.get_state()
+                    c_state["players"] = {p_id: {"name": self.global_players[p_id]["name"], "balance": self.global_players[p_id]["balance"]} for p_id in self.global_players if self.global_players[p_id]["room"] == "crash"}
+                    data = json.dumps({"type": "state", "data": c_state}).encode('utf-8')
                     client.sendall(data + b"\n")
                 elif room == "lobby":
                     lobby_state = {
@@ -1141,6 +1277,17 @@ class Server:
                                 table.act(msg.get("poker_action"), msg.get("discards"))
                             elif action == "p_step":
                                 table.step()
+                        elif self.global_players[pid]["room"] == "crash":
+                            if action == "c_bet":
+                                self.crash_game.place_bet(pid, msg.get("amount", 10))
+                            elif action == "c_start":
+                                self.crash_game.start_flight()
+                            elif action == "c_cashout":
+                                self.crash_game.cashout(pid)
+                            elif action == "c_crash":
+                                self.crash_game.trigger_crash()
+                            elif action == "c_reset":
+                                self.crash_game.reset()
                         self.broadcast_state()
         except Exception as e:
             print("Server error:", e)
@@ -1217,6 +1364,7 @@ class _LocalBackend:
         self.roulette_game = RouletteGame(self)
         self.slots_game = SlotsGame(self)
         self.poker_room = PokerRoom(self)
+        self.crash_game = CrashGame(self)
         self.clients = {}
 
 
@@ -1252,6 +1400,9 @@ class LocalClient:
             state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
         elif self.room == "poker":
             state = self.server.poker_room.table_for(self.player_id).get_state()
+            state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
+        elif self.room == "crash":
+            state = self.server.crash_game.get_state()
             state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
         self.on_state_update(state)
 
@@ -1312,6 +1463,18 @@ class LocalClient:
                 table.act(kwargs.get("poker_action"), kwargs.get("discards"))
             elif action == "p_step":
                 table.step()
+        elif self.room == "crash":
+            game = self.server.crash_game
+            if action == "c_bet":
+                game.place_bet(pid, int(kwargs.get("amount", 10)))
+            elif action == "c_start":
+                game.start_flight()
+            elif action == "c_cashout":
+                game.cashout(pid)
+            elif action == "c_crash":
+                game.trigger_crash()
+            elif action == "c_reset":
+                game.reset()
         self._trigger_update()
 
 
@@ -1335,6 +1498,7 @@ class ProfileManager:
             "roulette_played": 0, "roulette_wins": 0,
             "slots_played": 0, "slots_wins": 0,
             "poker_played": 0, "poker_wins": 0,
+            "crash_played": 0, "crash_wins": 0,
             "biggest_win": 0,
             "total_wagered": 0,
             "welfare_count": 0
@@ -2108,6 +2272,8 @@ class LobbyScreen(QWidget):
                                       "#7A5A12", "#A07A1E", "#C99A2C", self.app.join_slots), 1, 0)
         games.addWidget(ClickableTile("POKER", "Five-card draw vs bots",
                                       "#3A2A6E", "#4E3A93", "#6A52C0", self.app.join_poker), 1, 1)
+        games.addWidget(ClickableTile("CRASH", "Cash out before it drops",
+                                      "#1C212D", "#2E3440", "#4C566A", self.app.join_crash), 2, 0, 1, 2)
         gw = QWidget()
         gw.setLayout(games)
         body.addWidget(gw, 0, Qt.AlignCenter)
@@ -2461,6 +2627,7 @@ class RouletteScreen(QWidget):
         self.base_text = {}    # bet_type -> base label
         self._last_spin_n = None
         self._pending_win = None
+        self._staked_this_round = 0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -2647,8 +2814,7 @@ class RouletteScreen(QWidget):
         if self._pending_win is not None:
             # Update stats
             self.app.profile.stats["roulette_played"] += 1
-            past_active = self.app.game_state.get("active_bets", {}).get(self.app.player_id, []) if self.app.game_state else []
-            total_bet = sum(b.get("amount", 0) for b in past_active)
+            total_bet = self._staked_this_round
             self.app.profile.stats["total_wagered"] += total_bet
             if self._pending_win > 0:
                 self.app.profile.stats["roulette_wins"] += 1
@@ -2656,6 +2822,7 @@ class RouletteScreen(QWidget):
                 if net_win > self.app.profile.stats["biggest_win"]:
                     self.app.profile.stats["biggest_win"] = net_win
             self.app.profile.save()
+            self._staked_this_round = 0
 
             if self._pending_win > 0:
                 show_celebration(self, f"+${int(self._pending_win)}")
@@ -2692,6 +2859,7 @@ class RouletteScreen(QWidget):
 
         active = state.get("active_bets", {}).get(self.app.player_id, [])
         if active:
+            self._staked_this_round = sum(b.get("amount", 0) for b in active)
             totals = {}
             for bet in active:
                 totals[bet["type"]] = totals.get(bet["type"], 0) + bet["amount"]
@@ -3350,6 +3518,227 @@ class AchievementsScreen(QWidget):
                 col = 0
                 row += 1
 
+
+class CrashCanvas(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.multiplier = 1.00
+        self.state = "waiting_for_bets"
+        self.crashed_at = None
+        self.history = []
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        # Background
+        rect = QRectF(2, 2, self.width() - 4, self.height() - 4)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 14, 14)
+        g = QLinearGradient(0, 0, 0, self.height())
+        g.setColorAt(0, QColor("#12161E"))
+        g.setColorAt(1, QColor("#1C212D"))
+        p.fillPath(path, QBrush(g))
+        p.setPen(QPen(QColor("#2E3440"), 2))
+        p.drawPath(path)
+
+        # History
+        if self.history:
+            hist_str = "  ".join(f"{x:.2f}x" for x in self.history)
+            p.setPen(QColor("#5b5f66"))
+            p.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            p.drawText(QRectF(16, 16, self.width()-32, 20), Qt.AlignRight, hist_str)
+
+        # The Curve
+        if self.state in ("flying", "crashed"):
+            # We want to map [1.0, current_multiplier] to a curve from bottom-left to top-right.
+            # X goes 0 to 1 based on an arbitrary max time, or just logarithmic relative to multiplier.
+            max_mult = max(2.0, self.multiplier * 1.2)
+
+            p1 = QPointF(20, self.height() - 20)
+
+            # The current tip of the line
+            x_tip = min(self.width() - 40, 20 + (self.width() - 60) * (math.log(self.multiplier) / math.log(max_mult)))
+            y_tip = self.height() - 20 - (self.height() - 60) * (self.multiplier - 1.0) / (max_mult - 1.0)
+            p2 = QPointF(x_tip, y_tip)
+
+            curve = QPainterPath(p1)
+            ctrl1 = QPointF(p1.x() + (p2.x() - p1.x()) * 0.5, p1.y())
+            ctrl2 = QPointF(p1.x() + (p2.x() - p1.x()) * 0.8, p2.y())
+            curve.cubicTo(ctrl1, ctrl2, p2)
+
+            color = QColor("#E5564B") if self.state == "crashed" else QColor("#3FBF6B")
+            p.setPen(QPen(color, 4))
+            p.drawPath(curve)
+
+            # Draw Rocket/Tip
+            p.setBrush(color)
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(p2, 6, 6)
+
+        # Huge Multiplier Label
+        text_color = QColor("#E5564B") if self.state == "crashed" else QColor("#E9C46A")
+        p.setPen(text_color)
+        p.setFont(QFont("Segoe UI", 56, QFont.Bold))
+        display_val = self.crashed_at if self.state == "crashed" and self.crashed_at else self.multiplier
+        p.drawText(rect, Qt.AlignCenter, f"{display_val:.2f}x")
+
+        if self.state == "crashed":
+            p.setFont(QFont("Segoe UI", 24, QFont.Bold))
+            p.drawText(QRectF(0, self.height()/2 + 40, self.width(), 40), Qt.AlignCenter, "CRASHED!")
+
+class CrashScreen(QWidget):
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        self._bet_placed = False
+        self._cashed_out = False
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        bar = QFrame()
+        bar.setObjectName("topbar")
+        bar.setFixedHeight(64)
+        bl = QHBoxLayout(bar)
+        bl.setContentsMargins(18, 0, 18, 0)
+        bl.addWidget(make_button("‹  Lobby", "crimson", self.app.leave_room))
+        self.balance_lbl = QLabel("")
+        self.balance_lbl.setObjectName("balance")
+        bl.addSpacing(12)
+        bl.addWidget(self.balance_lbl)
+        bl.addStretch(1)
+        bl.addWidget(sound_toggle_button(self.app))
+        root.addWidget(bar)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(24, 18, 24, 10)
+        body.setSpacing(16)
+
+        self.canvas = CrashCanvas(self)
+        shadow(self.canvas, blur=34, dy=10)
+        body.addWidget(self.canvas, 1)
+
+        bw = QWidget()
+        bw.setLayout(body)
+        root.addWidget(bw, 1)
+
+        controls = QFrame()
+        controls.setFixedHeight(150)
+        cl = QVBoxLayout(controls)
+        cl.setContentsMargins(18, 10, 18, 14)
+        cl.setSpacing(10)
+        self.chipbar = ChipBar(self.app)
+        cl.addWidget(self.chipbar)
+
+        brow = QHBoxLayout()
+        brow.addStretch(1)
+        self.action_btn = make_button("PLACE BET", "gold", self._on_action, big=True)
+        self.action_btn.setMinimumWidth(240)
+        brow.addWidget(self.action_btn)
+        brow.addStretch(1)
+        cl.addLayout(brow)
+        root.addWidget(controls)
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self._ticks = 0
+
+    def _on_action(self):
+        state = (self.app.game_state or {}).get("state", "waiting_for_bets")
+        if state == "waiting_for_bets" and not self._bet_placed:
+            amt = self.app.active_chip
+            me = (self.app.game_state or {}).get("players", {}).get(self.app.player_id)
+            if me and me["balance"] >= amt:
+                self._bet_placed = True
+                self.app.sound.play("chip")
+                self.action_btn.setEnabled(False)
+                self.app.send_action("c_bet", amount=amt)
+
+        elif state == "flying" and self._bet_placed and not self._cashed_out:
+            self._cashed_out = True
+            self.app.sound.play("win")
+            self.action_btn.setEnabled(False)
+            self.action_btn.setText(f"CASHED OUT!")
+            self.app.send_action("c_cashout")
+
+    def _tick(self):
+        if self.canvas.state == "flying":
+            # Just interpolate based on server's value to make it smooth locally
+            self.canvas.multiplier += (self.target_multiplier - self.canvas.multiplier) * 0.2
+            if self.canvas.multiplier < 1.0: self.canvas.multiplier = 1.0
+            self.canvas.update()
+
+            if self._bet_placed and not self._cashed_out:
+                self.action_btn.setText(f"CASH OUT  ${int(self.app.active_chip * self.canvas.multiplier)}")
+
+    def update_state(self, state):
+        me = state.get("players", {}).get(self.app.player_id)
+        if me:
+            self.balance_lbl.setText(f"Balance: ${int(me['balance'])}")
+            self.chipbar.refresh(me["balance"])
+
+        s = state.get("state", "waiting_for_bets")
+
+        self.target_multiplier = state.get("current_multiplier", 1.0)
+
+        # State transition handlers
+        if s == "waiting_for_bets" and self.canvas.state != "waiting_for_bets":
+            self.canvas.state = s
+            self.canvas.multiplier = 1.00
+            self._bet_placed = False
+            self._cashed_out = False
+            self.canvas.crashed_at = None
+            self.action_btn.setText("PLACE BET")
+            self.action_btn.setProperty("variant", "gold")
+            self.action_btn.style().unpolish(self.action_btn)
+            self.action_btn.style().polish(self.action_btn)
+            self.action_btn.setEnabled(True)
+            self.timer.stop()
+            self.canvas.update()
+
+        elif s == "flying":
+            if self.canvas.state != "flying":
+                self.canvas.state = s
+                self.canvas.history = state.get("history", [])
+                self.timer.start(33) # ~30 fps
+                if self._bet_placed:
+                    self.action_btn.setProperty("variant", "charcoal")
+                    self.action_btn.setStyleSheet("background: #3FBF6B; color: #fff;") # Force green override
+                    self.action_btn.setEnabled(True)
+                else:
+                    self.action_btn.setText("FLYING...")
+                    self.action_btn.setEnabled(False)
+
+        elif s == "crashed" and self.canvas.state != "crashed":
+            self.canvas.state = s
+            self.canvas.crashed_at = state.get("crash_point", self.canvas.multiplier)
+            self.timer.stop()
+            self.app.sound.play("lose")
+            self.action_btn.setStyleSheet("") # Clear override
+            self.action_btn.setProperty("variant", "crimson")
+            self.action_btn.style().unpolish(self.action_btn)
+            self.action_btn.style().polish(self.action_btn)
+            self.action_btn.setText("CRASHED")
+            self.action_btn.setEnabled(False)
+            self.canvas.update()
+
+            # Update stats logic specifically for Crash
+            bet_info = state.get("bets", {}).get(self.app.player_id)
+            if bet_info:
+                self.app.profile.stats["crash_played"] = self.app.profile.stats.get("crash_played", 0) + 1
+                self.app.profile.stats["total_wagered"] += bet_info["amount"]
+                if bet_info["cashed_out"]:
+                    self.app.profile.stats["crash_wins"] = self.app.profile.stats.get("crash_wins", 0) + 1
+                    net_win = bet_info["won"] - bet_info["amount"]
+                    if net_win > self.app.profile.stats["biggest_win"]:
+                        self.app.profile.stats["biggest_win"] = net_win
+                self.app.profile.save()
+
+# --------------------------------------------------------------------------
+# Main window / controller
+
 # --------------------------------------------------------------------------
 # Main window / controller
 
@@ -3494,6 +3883,7 @@ class StatsScreen(QWidget):
         self.break_grid.addWidget(self._make_game_row("ROULETTE", s["roulette_played"], s["roulette_wins"]), 1, 0)
         self.break_grid.addWidget(self._make_game_row("SLOTS", s["slots_played"], s["slots_wins"]), 2, 0)
         self.break_grid.addWidget(self._make_game_row("POKER", s["poker_played"], s["poker_wins"]), 3, 0)
+        self.break_grid.addWidget(self._make_game_row("CRASH", s.get("crash_played", 0), s.get("crash_wins", 0)), 4, 0)
 
 class Bridge(QObject):
 
@@ -3537,9 +3927,10 @@ class CasinoApp(QMainWindow):
         self.roulette = RouletteScreen(self)
         self.slots = SlotsScreen(self)
         self.poker = PokerScreen(self)
+        self.crash = CrashScreen(self)
         self.achievements = AchievementsScreen(self)
         self.stats_screen = StatsScreen(self)
-        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker, self.achievements, self.stats_screen):
+        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker, self.crash, self.achievements, self.stats_screen):
             self.stack.addWidget(w)
         self.stack.setCurrentWidget(self.start)
         self._install_shortcuts()
@@ -3605,6 +3996,12 @@ class CasinoApp(QMainWindow):
         self.client.send_action("join_room", room="poker")
         self.stack.setCurrentWidget(self.poker)
 
+    def join_crash(self):
+        if not self.client:
+            return
+        self.client.send_action("join_room", room="crash")
+        self.stack.setCurrentWidget(self.crash)
+
     def leave_room(self):
         if self.client:
             self.client.send_action("leave_room")
@@ -3652,6 +4049,9 @@ class CasinoApp(QMainWindow):
         elif s == "poker":
             self.stack.setCurrentWidget(self.poker)
             self.poker.update_state(state)
+        elif s == "crash":
+            self.stack.setCurrentWidget(self.crash)
+            self.crash.update_state(state)
         else:
             self.stack.setCurrentWidget(self.blackjack)
             self.blackjack.update_state(state)
