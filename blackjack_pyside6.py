@@ -2461,6 +2461,7 @@ class RouletteScreen(QWidget):
         self.base_text = {}    # bet_type -> base label
         self._last_spin_n = None
         self._pending_win = None
+        self._staked_this_round = 0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -2647,8 +2648,7 @@ class RouletteScreen(QWidget):
         if self._pending_win is not None:
             # Update stats
             self.app.profile.stats["roulette_played"] += 1
-            past_active = self.app.game_state.get("active_bets", {}).get(self.app.player_id, []) if self.app.game_state else []
-            total_bet = sum(b.get("amount", 0) for b in past_active)
+            total_bet = self._staked_this_round
             self.app.profile.stats["total_wagered"] += total_bet
             if self._pending_win > 0:
                 self.app.profile.stats["roulette_wins"] += 1
@@ -2656,6 +2656,7 @@ class RouletteScreen(QWidget):
                 if net_win > self.app.profile.stats["biggest_win"]:
                     self.app.profile.stats["biggest_win"] = net_win
             self.app.profile.save()
+            self._staked_this_round = 0
 
             if self._pending_win > 0:
                 show_celebration(self, f"+${int(self._pending_win)}")
@@ -2692,6 +2693,7 @@ class RouletteScreen(QWidget):
 
         active = state.get("active_bets", {}).get(self.app.player_id, [])
         if active:
+            self._staked_this_round = sum(b.get("amount", 0) for b in active)
             totals = {}
             for bet in active:
                 totals[bet["type"]] = totals.get(bet["type"], 0) + bet["amount"]
