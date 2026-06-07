@@ -1330,6 +1330,15 @@ class ProfileManager:
             "natural_21": False,
             "phoenix": False
         }
+        self.stats = {
+            "bj_played": 0, "bj_wins": 0,
+            "roulette_played": 0, "roulette_wins": 0,
+            "slots_played": 0, "slots_wins": 0,
+            "poker_played": 0, "poker_wins": 0,
+            "biggest_win": 0,
+            "total_wagered": 0,
+            "welfare_count": 0
+        }
         self.load()
 
     def load(self):
@@ -1344,6 +1353,9 @@ class ProfileManager:
                     loaded_ach = data.get("achievements", {})
                     for k in self.achievements:
                         self.achievements[k] = loaded_ach.get(k, False)
+                    loaded_stats = data.get("stats", {})
+                    for k in self.stats:
+                        self.stats[k] = loaded_stats.get(k, 0)
             except Exception as e:
                 print(f"Failed to load profile: {e}")
 
@@ -1353,7 +1365,8 @@ class ProfileManager:
             "name": self.name,
             "balance": self.balance,
             "welfare_claimed": self.welfare_claimed,
-            "achievements": self.achievements
+            "achievements": self.achievements,
+            "stats": self.stats
         }
         try:
             with open(self.filepath, "w") as f:
@@ -2065,11 +2078,15 @@ class LobbyScreen(QWidget):
         bl.addStretch(1)
         bl.addWidget(self.balance_lbl)
         bl.addSpacing(12)
-        
+
         achv_btn = make_button("🏆 ACHIEVEMENTS", "gold", lambda: [self.app.achievements.refresh(), self.app.stack.setCurrentWidget(self.app.achievements)])
         bl.addWidget(achv_btn)
         bl.addSpacing(12)
-        
+
+        stats_btn = make_button("📊 STATISTICS", "gold", lambda: [self.app.stats_screen.refresh(), self.app.stack.setCurrentWidget(self.app.stats_screen)])
+        bl.addWidget(stats_btn)
+        bl.addSpacing(12)
+
         bl.addWidget(sound_toggle_button(self.app))
         root.addWidget(bar)
 
@@ -2340,6 +2357,18 @@ class BlackjackScreen(QWidget):
             outcome = "Win" if ("Win" in msg or "Blackjack" in msg) else ("Loss" if ("Lose" in msg or "Bust" in msg) else "Push")
             self.history.insert(0, outcome)
             self.history = self.history[:5]
+
+            # Update stats
+            self.app.profile.stats["bj_played"] += 1
+            hand_bet = me.get("hands", [{}])[0].get("bet", 0) if me.get("hands") else 0
+            self.app.profile.stats["total_wagered"] += hand_bet
+            if outcome == "Win":
+                self.app.profile.stats["bj_wins"] += 1
+                net_win = hand_bet * 1.5 if "Blackjack" in msg else hand_bet
+                if net_win > self.app.profile.stats["biggest_win"]:
+                    self.app.profile.stats["biggest_win"] = net_win
+            self.app.profile.save()
+
             if outcome == "Win":
                 is_bj = "Blackjack" in msg
                 if is_bj:
@@ -2616,6 +2645,18 @@ class RouletteScreen(QWidget):
             self.croupier_speech_lbl.setText(f"Выпало {res['number']}, {ru_color}! Поздравляем победителей!")
 
         if self._pending_win is not None:
+            # Update stats
+            self.app.profile.stats["roulette_played"] += 1
+            past_active = self.app.game_state.get("active_bets", {}).get(self.app.player_id, []) if self.app.game_state else []
+            total_bet = sum(b.get("amount", 0) for b in past_active)
+            self.app.profile.stats["total_wagered"] += total_bet
+            if self._pending_win > 0:
+                self.app.profile.stats["roulette_wins"] += 1
+                net_win = self._pending_win - total_bet
+                if net_win > self.app.profile.stats["biggest_win"]:
+                    self.app.profile.stats["biggest_win"] = net_win
+            self.app.profile.save()
+
             if self._pending_win > 0:
                 show_celebration(self, f"+${int(self._pending_win)}")
                 self.app.sound.play("win")
@@ -2854,6 +2895,18 @@ class SlotsScreen(QWidget):
         self.spin_btn.setEnabled(True)
         win = last["win"]
         reels = last["reels"]
+        bet = last.get("bet", 0)
+
+        # Update stats
+        self.app.profile.stats["slots_played"] += 1
+        self.app.profile.stats["total_wagered"] += bet
+        if win > 0:
+            self.app.profile.stats["slots_wins"] += 1
+            net_win = win - bet
+            if net_win > self.app.profile.stats["biggest_win"]:
+                self.app.profile.stats["biggest_win"] = net_win
+        self.app.profile.save()
+
         if win > 0:
             jackpot = (reels[0] == reels[1] == reels[2])
             if jackpot and reels[0] == "7":
@@ -3133,6 +3186,18 @@ class PokerScreen(QWidget):
         res = state.get("results")
         if res and state["hand_no"] != self._last_showdown_hand:
             self._last_showdown_hand = state["hand_no"]
+
+            # Update stats
+            self.app.profile.stats["poker_played"] += 1
+            self.app.profile.stats["total_wagered"] += me.get("committed_total", 0)
+            if 0 in res.get("winners", []):
+                self.app.profile.stats["poker_wins"] += 1
+                pot_size = res.get("pot", 0)
+                net_win = (pot_size // len(res["winners"])) - me.get("committed_total", 0)
+                if net_win > self.app.profile.stats["biggest_win"]:
+                    self.app.profile.stats["biggest_win"] = net_win
+            self.app.profile.save()
+
             if 0 in res.get("winners", []):
                 win_name = res.get("names", {}).get("0", "")
                 if win_name in ["Straight", "Flush", "Full House", "Four of a Kind", "Straight Flush"]:
@@ -3217,10 +3282,10 @@ class AchievementsScreen(QWidget):
         body = QVBoxLayout()
         body.setAlignment(Qt.AlignCenter)
         body.setSpacing(28)
-        
+
         self.grid = QGridLayout()
         self.grid.setSpacing(24)
-        
+
         gw = QWidget()
         gw.setLayout(self.grid)
         body.addWidget(gw, 0, Qt.AlignCenter)
@@ -3242,13 +3307,13 @@ class AchievementsScreen(QWidget):
             ("natural_21", "Natural 21", "Get a natural Blackjack on deal"),
             ("phoenix", "Phoenix", "Go broke to $0, get welfare bonus, and reach $5,000+")
         ]
-        
+
         row, col = 0, 0
         for key, title, desc in achievements_data:
             unlocked = self.app.profile.achievements.get(key, False)
             tile = QFrame()
             tile.setFixedSize(290, 140)
-            
+
             if unlocked:
                 tile.setStyleSheet("border-radius:20px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #A07A1E,stop:1 #7A5A12); border: 2px solid #E9C46A;")
             else:
@@ -3256,29 +3321,29 @@ class AchievementsScreen(QWidget):
                 eff = QGraphicsOpacityEffect(tile)
                 eff.setOpacity(0.6)
                 tile.setGraphicsEffect(eff)
-                
+
             shadow(tile, blur=20, dy=6)
             v = QVBoxLayout(tile)
             v.setAlignment(Qt.AlignCenter)
             v.setSpacing(8)
-            
+
             t = QLabel(title)
             t.setAlignment(Qt.AlignCenter)
             t.setStyleSheet(f"background:transparent; color:{'#fff' if unlocked else '#8A909A'}; font-size:22px; font-weight:800; letter-spacing:1px;")
-            
+
             s = QLabel(desc)
             s.setAlignment(Qt.AlignCenter)
             s.setWordWrap(True)
             s.setStyleSheet(f"background:transparent; color:{'rgba(255,255,255,0.9)' if unlocked else '#5b5f66'}; font-size:12px;")
-            
+
             status = QLabel("🏆 Unlocked!" if unlocked else "🔒 Locked")
             status.setAlignment(Qt.AlignCenter)
             status.setStyleSheet(f"background:transparent; color:{'#FFD700' if unlocked else '#5b5f66'}; font-size:14px; font-weight:700; margin-top:5px;")
-            
+
             v.addWidget(t)
             v.addWidget(s)
             v.addWidget(status)
-            
+
             self.grid.addWidget(tile, row, col)
             col += 1
             if col > 2:
@@ -3290,7 +3355,148 @@ class AchievementsScreen(QWidget):
 
 # --------------------------------------------------------------------------
 
+
+class StatsScreen(QWidget):
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        bar = QFrame()
+        bar.setObjectName("topbar")
+        bar.setFixedHeight(64)
+        bl = QHBoxLayout(bar)
+        bl.setContentsMargins(18, 0, 18, 0)
+        bl.addWidget(make_button("‹  Lobby", "charcoal", lambda: self.app.stack.setCurrentWidget(self.app.lobby)))
+        title = QLabel("📊 PLAYER ANALYTICS")
+        title.setStyleSheet("color:#E9C46A; font-size:18px; font-weight:800; letter-spacing:3px;")
+        bl.addStretch(1)
+        bl.addWidget(title)
+        bl.addStretch(1)
+        bl.addWidget(sound_toggle_button(self.app))
+        root.addWidget(bar)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background: transparent; border: none;")
+
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        body_layout = QVBoxLayout(body)
+        body_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        body_layout.setSpacing(28)
+        body_layout.setContentsMargins(20, 30, 20, 30)
+
+        # General Records
+        gen_box = QFrame()
+        gen_box.setStyleSheet("border-radius:20px; background:rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);")
+        gen_box.setFixedWidth(580)
+        shadow(gen_box, blur=20, dy=6)
+        gv = QVBoxLayout(gen_box)
+        gv.setContentsMargins(24, 20, 24, 20)
+        gv.setSpacing(12)
+
+        gt = QLabel("GENERAL RECORDS")
+        gt.setStyleSheet("color:#D7DBE0; font-size:14px; font-weight:800; letter-spacing:2px; background:transparent; border:none;")
+        gt.setAlignment(Qt.AlignCenter)
+        gv.addWidget(gt)
+
+        self.gen_grid = QGridLayout()
+        self.gen_grid.setSpacing(16)
+        gv.addLayout(self.gen_grid)
+        body_layout.addWidget(gen_box)
+
+        # Game Breakdowns
+        break_box = QFrame()
+        break_box.setStyleSheet("border-radius:20px; background:rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);")
+        break_box.setFixedWidth(580)
+        shadow(break_box, blur=20, dy=6)
+        bv = QVBoxLayout(break_box)
+        bv.setContentsMargins(24, 20, 24, 20)
+        bv.setSpacing(12)
+
+        bt = QLabel("GAME BREAKDOWN")
+        bt.setStyleSheet("color:#D7DBE0; font-size:14px; font-weight:800; letter-spacing:2px; background:transparent; border:none;")
+        bt.setAlignment(Qt.AlignCenter)
+        bv.addWidget(bt)
+
+        self.break_grid = QGridLayout()
+        self.break_grid.setSpacing(16)
+        bv.addLayout(self.break_grid)
+        body_layout.addWidget(break_box)
+
+        scroll.setWidget(body)
+        root.addWidget(scroll, 1)
+
+    def _make_stat_card(self, title, value):
+        w = QFrame()
+        w.setStyleSheet("background:rgba(0,0,0,0.3); border-radius:12px; border: 1px solid rgba(255,255,255,0.05);")
+        w.setMinimumHeight(70)
+        l = QVBoxLayout(w)
+        l.setAlignment(Qt.AlignCenter)
+        l.setSpacing(4)
+        tl = QLabel(title)
+        tl.setStyleSheet("color:#8A909A; font-size:12px; background:transparent; border:none;")
+        tl.setAlignment(Qt.AlignCenter)
+        vl = QLabel(str(value))
+        vl.setStyleSheet("color:#E9C46A; font-size:20px; font-weight:800; background:transparent; border:none;")
+        vl.setAlignment(Qt.AlignCenter)
+        l.addWidget(tl)
+        l.addWidget(vl)
+        return w
+
+    def _make_game_row(self, title, played, wins):
+        w = QFrame()
+        w.setStyleSheet("background:rgba(0,0,0,0.3); border-radius:12px; border: 1px solid rgba(255,255,255,0.05);")
+        w.setMinimumHeight(60)
+        l = QHBoxLayout(w)
+        l.setContentsMargins(20, 10, 20, 10)
+
+        t = QLabel(title)
+        t.setStyleSheet("color:#fff; font-size:16px; font-weight:800; background:transparent; border:none; width: 120px;")
+        t.setMinimumWidth(120)
+        l.addWidget(t)
+
+        l.addStretch(1)
+
+        p = QLabel(f"Played: {played}")
+        p.setStyleSheet("color:#B9BFC8; font-size:13px; background:transparent; border:none;")
+        p.setMinimumWidth(80)
+        l.addWidget(p)
+
+        wi = QLabel(f"Wins: {wins}")
+        wi.setStyleSheet("color:#B9BFC8; font-size:13px; background:transparent; border:none;")
+        wi.setMinimumWidth(80)
+        l.addWidget(wi)
+
+        rate = (wins / played * 100) if played > 0 else 0
+        r = QLabel(f"{rate:.1f}%")
+        r.setStyleSheet("color:#E9C46A; font-size:16px; font-weight:800; background:transparent; border:none;")
+        r.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        r.setMinimumWidth(60)
+        l.addWidget(r)
+
+        return w
+
+    def refresh(self):
+        clear_layout(self.gen_grid)
+        clear_layout(self.break_grid)
+
+        s = self.app.profile.stats
+
+        self.gen_grid.addWidget(self._make_stat_card("Total Wagered", f"${int(s['total_wagered'])}"), 0, 0)
+        self.gen_grid.addWidget(self._make_stat_card("Biggest Win", f"${int(s['biggest_win'])}"), 0, 1)
+        self.gen_grid.addWidget(self._make_stat_card("Welfare Claims", str(s['welfare_count'])), 0, 2)
+
+        self.break_grid.addWidget(self._make_game_row("BLACKJACK", s["bj_played"], s["bj_wins"]), 0, 0)
+        self.break_grid.addWidget(self._make_game_row("ROULETTE", s["roulette_played"], s["roulette_wins"]), 1, 0)
+        self.break_grid.addWidget(self._make_game_row("SLOTS", s["slots_played"], s["slots_wins"]), 2, 0)
+        self.break_grid.addWidget(self._make_game_row("POKER", s["poker_played"], s["poker_wins"]), 3, 0)
+
 class Bridge(QObject):
+
     """Marshals state updates from the network thread onto the GUI thread."""
     state = Signal(object)
 
@@ -3332,7 +3538,8 @@ class CasinoApp(QMainWindow):
         self.slots = SlotsScreen(self)
         self.poker = PokerScreen(self)
         self.achievements = AchievementsScreen(self)
-        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker, self.achievements):
+        self.stats_screen = StatsScreen(self)
+        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker, self.achievements, self.stats_screen):
             self.stack.addWidget(w)
         self.stack.setCurrentWidget(self.start)
         self._install_shortcuts()
@@ -3415,18 +3622,23 @@ class CasinoApp(QMainWindow):
     # -- state routing (runs on the GUI thread) ------------------------------
     def on_state(self, state):
         self.game_state = state
-        
+
         # Check balances for phoenix achievement and welfare
         me = state.get("players", {}).get(self.player_id)
         if me:
             bal = me.get("balance", 0)
             if bal <= 0:
+                if self.profile.stats["welfare_count"] == 0 or not getattr(self, "_welfare_flag_locked", False):
+                    self.profile.stats["welfare_count"] += 1
+                    setattr(self, "_welfare_flag_locked", True)
                 self.send_action("claim_welfare")
                 self.profile.welfare_claimed = True
-            
+            elif bal > 0:
+                setattr(self, "_welfare_flag_locked", False)
+
             if self.profile.welfare_claimed and bal >= 5000:
                 self.profile.unlock("phoenix", self)
-                
+
         s = state.get("state")
         if s == "lobby":
             self.stack.setCurrentWidget(self.lobby)
@@ -3458,7 +3670,7 @@ class CasinoApp(QMainWindow):
         from PySide6.QtWidgets import QGraphicsOpacityEffect
         name = names.get(key, key)
         self.sound.play("jackpot")
-        
+
         lbl = QLabel(f"🏆 Achievement Unlocked: {name}!", self)
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setStyleSheet("color:#E9C46A; font-size:22px; font-weight:800; background:rgba(0,0,0,0.8); border: 2px solid #E9C46A; border-radius: 12px; padding: 10px;")
@@ -3470,7 +3682,7 @@ class CasinoApp(QMainWindow):
 
         eff = QGraphicsOpacityEffect(lbl)
         lbl.setGraphicsEffect(eff)
-        
+
         a_op = QPropertyAnimation(eff, b"opacity", lbl)
         a_op.setDuration(4000)
         a_op.setKeyValueAt(0.0, 0.0)
@@ -3485,7 +3697,7 @@ class CasinoApp(QMainWindow):
         a_pos.setKeyValueAt(0.8, QPoint(x, 20))
         a_pos.setEndValue(QPoint(x, -50))
         a_pos.setEasingCurve(QEasingCurve.OutCubic)
-        
+
         a_op.finished.connect(lbl.deleteLater)
         a_op.start(QPropertyAnimation.DeleteWhenStopped)
         a_pos.start(QPropertyAnimation.DeleteWhenStopped)
