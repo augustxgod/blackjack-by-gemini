@@ -14,7 +14,6 @@ thread.
 import sys
 import os
 import math
-import time
 import json
 import uuid
 import wave
@@ -570,6 +569,103 @@ class SlotsGame:
         return {"state": "slots", "last": self.last.get(pid)}
 
 
+
+# ==========================================================================
+# WHEEL OF FORTUNE
+# ==========================================================================
+
+class WheelOfFortuneGame:
+    WHEEL_SEGMENTS = (
+        [1] * 24 +
+        [2] * 15 +
+        [5] * 7 +
+        [10] * 4 +
+        [20] * 2 +
+        [40] * 2
+    )
+
+    def __init__(self, server):
+        self.server = server
+        self.state = "waiting_for_bets"
+        self.bets = {}        # pid -> {"1": 0, "2": 0, "5": 0, "10": 0, "20": 0, "40": 0}
+        self.last_bets = {}   # For rebet
+        self.last_result = None
+        self.last_win = {}    # pid -> amount won
+        self.spin_n = 0
+
+    def place_bet(self, pid, amount, bet_type):
+        if self.state != "waiting_for_bets":
+            return False
+        gp = self.server.global_players.get(pid)
+        if not gp or gp["balance"] < amount or amount <= 0:
+            return False
+
+        if bet_type not in ["1", "2", "5", "10", "20", "40"]:
+            return False
+
+        gp["balance"] -= amount
+        if pid not in self.bets:
+            self.bets[pid] = {}
+        self.bets[pid][bet_type] = self.bets[pid].get(bet_type, 0) + amount
+        return True
+
+    def clear_bets(self, pid):
+        if self.state != "waiting_for_bets":
+            return
+        gp = self.server.global_players.get(pid)
+        if not gp or pid not in self.bets:
+            return
+        total_refund = sum(self.bets[pid].values())
+        gp["balance"] += total_refund
+        del self.bets[pid]
+
+    def rebet(self, pid):
+        if self.state != "waiting_for_bets":
+            return
+        last = self.last_bets.get(pid, {})
+        for b_type, amt in last.items():
+            self.place_bet(pid, amt, b_type)
+
+    def spin(self):
+        if self.state != "waiting_for_bets":
+            return
+
+        self.state = "result"
+        import random
+        target_idx = random.randint(0, len(self.WHEEL_SEGMENTS) - 1)
+        target_mult = self.WHEEL_SEGMENTS[target_idx]
+
+        self.last_result = {"index": target_idx, "multiplier": target_mult}
+        self.last_win = {}
+
+        for pid, p_bets in self.bets.items():
+            gp = self.server.global_players.get(pid)
+            if not gp: continue
+
+            won = 0
+            if str(target_mult) in p_bets:
+                # Pays X:1 plus returns original wager
+                won = p_bets[str(target_mult)] * (target_mult + 1)
+
+            if won > 0:
+                gp["balance"] += won
+            self.last_win[pid] = won
+
+        self.last_bets = self.bets.copy()
+        self.bets = {}
+        self.spin_n += 1
+        self.state = "waiting_for_bets"
+
+    def get_state(self):
+        return {
+            "state": self.state,
+            "bets": self.bets,
+            "last_result": self.last_result,
+            "last_win": self.last_win,
+            "spin_n": self.spin_n
+        }
+
+
 # ==========================================================================
 # FIVE-CARD DRAW POKER (vs AI bots)
 # ==========================================================================
@@ -997,138 +1093,9 @@ class PokerRoom:
         return self.tables[pid]
 
 
-
-
-# ==========================================================================
-# CRASH GAME
-# ==========================================================================
-
-class CrashGame:
-    def __init__(self, server):
-        self.server = server
-        self.state = "waiting_for_bets"
-        self.bets = {}        # pid -> {"amount": int, "cashed_out": bool, "won": int}
-        self.crash_point = 1.0
-        self.current_multiplier = 1.0
-        self.ticks = 0
-        self.history = []     # last 5 crash points
-        self._loop_thread = None
-        self._stop_event = threading.Event()
-
-    def place_bet(self, pid, amount):
-        if self.state != "waiting_for_bets":
-            return False
-        gp = self.server.global_players.get(pid)
-        if not gp or gp["balance"] < amount or amount <= 0:
-            return False
-        gp["balance"] -= amount
-        self.bets[pid] = {"amount": amount, "cashed_out": False, "won": 0}
-
-        # In a real game, this might wait for more players. For now, auto-start after 2 seconds
-        # if the thread is not already queued to start.
-        if self._loop_thread is None or not self._loop_thread.is_alive():
-            self._start_delay()
-
-        return True
-
-    def _start_delay(self):
-        if self._loop_thread and self._loop_thread.is_alive():
-            return
-        self._loop_thread = threading.Thread(target=self._flight_loop, daemon=True)
-        self._loop_thread.start()
-
-    def _flight_loop(self):
-        # 2-second betting window
-        time.sleep(2)
-
-        if self.state != "waiting_for_bets":
-            return
-
-        self.state = "flying"
-        import random
-        e = 0.99
-        u = random.random()
-        if u == 0: u = 0.0001
-        self.crash_point = max(1.00, e / u)
-        self.current_multiplier = 1.00
-        self.ticks = 0
-
-        # Broadcast the flight start immediately
-        try:
-            self.server.broadcast_state()
-        except Exception: pass
-
-        while self.state == "flying":
-            time.sleep(0.033) # ~30 ticks per sec
-            self.ticks += 1
-            self.current_multiplier = 1.01 ** self.ticks
-
-            if self.current_multiplier >= self.crash_point:
-                self.trigger_crash()
-                break
-
-            # Broadcast the updated multiplier periodically
-            if self.ticks % 3 == 0:
-                try:
-                    self.server.broadcast_state()
-                except Exception: pass
-
-    def cashout(self, pid):
-        if self.state != "flying":
-            return False
-        bet_info = self.bets.get(pid)
-        if not bet_info or bet_info["cashed_out"]:
-            return False
-
-        # Lock in win at the current server-side multiplier
-        win_amount = int(bet_info["amount"] * self.current_multiplier)
-        bet_info["cashed_out"] = True
-        bet_info["won"] = win_amount
-
-        gp = self.server.global_players.get(pid)
-        if gp:
-            gp["balance"] += win_amount
-        return True
-
-    def trigger_crash(self):
-        if self.state != "flying":
-            return
-        self.state = "crashed"
-        self.history.insert(0, round(self.crash_point, 2))
-        self.history = self.history[:5]
-
-        try:
-            self.server.broadcast_state()
-        except Exception: pass
-
-        # Auto-reset after 3 seconds
-        time.sleep(3)
-        self.reset()
-
-    def reset(self):
-        self.state = "waiting_for_bets"
-        self.bets = {}
-        self.crash_point = 1.0
-        self.current_multiplier = 1.0
-        self.ticks = 0
-        try:
-            self.server.broadcast_state()
-        except Exception: pass
-
-    def get_state(self):
-        return {
-            "state": self.state,
-            "bets": self.bets,
-            "crash_point": self.crash_point,
-            "current_multiplier": self.current_multiplier,
-            "history": self.history
-        }
-
-
 # ==========================================================================
 # NETWORK  (unchanged from the original game)
 # ==========================================================================
-
 
 class Server:
     def __init__(self, host='0.0.0.0'):
@@ -1143,11 +1110,8 @@ class Server:
         self.roulette_game = RouletteGame(self)
         self.slots_game = SlotsGame(self)
         self.poker_room = PokerRoom(self)
-        self.crash_game = CrashGame(self)
+        self.wheel_game = WheelOfFortuneGame(self)
         self.clients = {}
-
-    def broadcast_state(self):
-        pass
 
     def start(self):
         threading.Thread(target=self.accept_clients, daemon=True).start()
@@ -1185,10 +1149,10 @@ class Server:
                     p_state["players"] = {pid: {"name": self.global_players[pid]["name"], "balance": self.global_players[pid]["balance"]}}
                     data = json.dumps({"type": "state", "data": p_state}).encode('utf-8')
                     client.sendall(data + b"\n")
-                elif room == "crash":
-                    c_state = self.crash_game.get_state()
-                    c_state["players"] = {p_id: {"name": self.global_players[p_id]["name"], "balance": self.global_players[p_id]["balance"]} for p_id in self.global_players if self.global_players[p_id]["room"] == "crash"}
-                    data = json.dumps({"type": "state", "data": c_state}).encode('utf-8')
+                elif room == "wheel":
+                    w_state = self.wheel_game.get_state()
+                    w_state["players"] = {p_id: {"name": self.global_players[p_id]["name"], "balance": self.global_players[p_id]["balance"]} for p_id in self.global_players if self.global_players[p_id]["room"] == "wheel"}
+                    data = json.dumps({"type": "state", "data": w_state}).encode('utf-8')
                     client.sendall(data + b"\n")
                 elif room == "lobby":
                     lobby_state = {
@@ -1280,17 +1244,15 @@ class Server:
                                 table.act(msg.get("poker_action"), msg.get("discards"))
                             elif action == "p_step":
                                 table.step()
-                        elif self.global_players[pid]["room"] == "crash":
-                            if action == "c_bet":
-                                self.crash_game.place_bet(pid, msg.get("amount", 10))
-                            elif action == "c_start":
-                                self.crash_game.start_flight()
-                            elif action == "c_cashout":
-                                self.crash_game.cashout(pid)
-                            elif action == "c_crash":
-                                self.crash_game.trigger_crash()
-                            elif action == "c_reset":
-                                self.crash_game.reset()
+                        elif self.global_players[pid]["room"] == "wheel":
+                            if action == "w_bet":
+                                self.wheel_game.place_bet(pid, msg.get("amount", 10), msg.get("bet_type"))
+                            elif action == "w_spin":
+                                self.wheel_game.spin()
+                            elif action == "w_clear":
+                                self.wheel_game.clear_bets(pid)
+                            elif action == "w_rebet":
+                                self.wheel_game.rebet(pid)
                         self.broadcast_state()
         except Exception as e:
             print("Server error:", e)
@@ -1367,11 +1329,8 @@ class _LocalBackend:
         self.roulette_game = RouletteGame(self)
         self.slots_game = SlotsGame(self)
         self.poker_room = PokerRoom(self)
-        self.crash_game = CrashGame(self)
+        self.wheel_game = WheelOfFortuneGame(self)
         self.clients = {}
-
-    def broadcast_state(self):
-        pass
 
 
 class LocalClient:
@@ -1383,10 +1342,6 @@ class LocalClient:
         self.room = "lobby"
         self.server.global_players[player_id] = {"name": name, "balance": 1000, "room": "lobby"}
         self.server.clients["local_socket_mock"] = player_id
-
-        # Override the broadcast method on the mock server so background threads
-        # (like CrashGame's flight loop) can successfully push states to the UI
-        self.server.broadcast_state = self._trigger_update
 
     def connect(self):
         self._trigger_update()
@@ -1411,8 +1366,8 @@ class LocalClient:
         elif self.room == "poker":
             state = self.server.poker_room.table_for(self.player_id).get_state()
             state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
-        elif self.room == "crash":
-            state = self.server.crash_game.get_state()
+        elif self.room == "wheel":
+            state = self.server.wheel_game.get_state()
             state["players"] = {self.player_id: {"name": self.name, "balance": self.server.global_players[self.player_id]["balance"]}}
         self.on_state_update(state)
 
@@ -1473,18 +1428,17 @@ class LocalClient:
                 table.act(kwargs.get("poker_action"), kwargs.get("discards"))
             elif action == "p_step":
                 table.step()
-        elif self.room == "crash":
-            game = self.server.crash_game
-            if action == "c_bet":
-                game.place_bet(pid, int(kwargs.get("amount", 10)))
-            elif action == "c_start":
-                game.start_flight()
-            elif action == "c_cashout":
-                game.cashout(pid)
-            elif action == "c_crash":
-                game.trigger_crash()
-            elif action == "c_reset":
-                game.reset()
+        elif self.room == "wheel":
+            game = self.server.wheel_game
+            if action == "w_bet":
+                game.place_bet(pid, int(kwargs.get("amount", 10)), kwargs.get("bet_type"))
+            elif action == "w_spin":
+                game.spin()
+            elif action == "w_clear":
+                game.clear_bets(pid)
+            elif action == "w_rebet":
+                game.rebet(pid)
+
         self._trigger_update()
 
 
@@ -1508,7 +1462,7 @@ class ProfileManager:
             "roulette_played": 0, "roulette_wins": 0,
             "slots_played": 0, "slots_wins": 0,
             "poker_played": 0, "poker_wins": 0,
-            "crash_played": 0, "crash_wins": 0,
+            "wheel_played": 0, "wheel_wins": 0,
             "biggest_win": 0,
             "total_wagered": 0,
             "welfare_count": 0
@@ -1619,12 +1573,6 @@ QScrollBar::handle { background: rgba(255,255,255,0.18); border-radius: 5px; }
 QScrollBar::add-line, QScrollBar::sub-line { width:0; height:0; }
 
 QLabel#dealerSpeech { color: #E9C46A; font-size: 15px; font-style: italic; font-weight: 600; }
-
-QLabel#avatar { background: #E9C46A; color: #1c1606; font-size: 14px; font-weight: 800; border-radius: 14px; }
-QFrame#nameBadgeNormal { background: rgba(255,255,255,0.06); border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); }
-QFrame#nameBadgeActive { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #F2D277, stop:1 #CFA02A); border-radius: 14px; border: 1px solid #FFD700; }
-QLabel#badgeTextNormal { color: #fff; font-size: 13px; font-weight: 800; background: transparent; }
-QLabel#badgeTextActive { color: #1c1606; font-size: 13px; font-weight: 800; background: transparent; }
 """
 
 
@@ -2288,8 +2236,8 @@ class LobbyScreen(QWidget):
                                       "#7A5A12", "#A07A1E", "#C99A2C", self.app.join_slots), 1, 0)
         games.addWidget(ClickableTile("POKER", "Five-card draw vs bots",
                                       "#3A2A6E", "#4E3A93", "#6A52C0", self.app.join_poker), 1, 1)
-        games.addWidget(ClickableTile("CRASH", "Cash out before it drops",
-                                      "#1C212D", "#2E3440", "#4C566A", self.app.join_crash), 2, 0, 1, 2)
+        games.addWidget(ClickableTile("WHEEL", "Spin the Dream Catcher",
+                                      "#1B2233", "#28344E", "#3A4B70", self.app.join_wheel), 2, 0, 1, 2)
         gw = QWidget()
         gw.setLayout(games)
         body.addWidget(gw, 0, Qt.AlignCenter)
@@ -2351,27 +2299,10 @@ class BlackjackScreen(QWidget):
         self.rules_lbl.setStyleSheet("color: rgba(233,196,106,0.85); font-size:13px; letter-spacing:2px; font-weight:700;")
         fl.addWidget(self.rules_lbl)
 
-        # Unified Name Badge for Dealer
-        dealer_badge = QFrame()
-        dealer_badge.setObjectName("nameBadgeNormal")
-        dealer_badge.setFixedHeight(28)
-        dealer_layout = QHBoxLayout(dealer_badge)
-        dealer_layout.setContentsMargins(0, 0, 10, 0)
-        dealer_layout.setSpacing(8)
-        dealer_layout.setAlignment(Qt.AlignCenter)
-
-        avatar = QLabel("D")
-        avatar.setObjectName("avatar")
-        avatar.setFixedSize(28, 28)
-        avatar.setAlignment(Qt.AlignCenter)
-
-        name_lbl = QLabel("DEALER")
-        name_lbl.setObjectName("badgeTextNormal")
-
-        dealer_layout.addWidget(avatar)
-        dealer_layout.addWidget(name_lbl)
-
-        fl.addWidget(dealer_badge, alignment=Qt.AlignCenter)
+        dealer_cap = QLabel("DEALER")
+        dealer_cap.setAlignment(Qt.AlignCenter)
+        dealer_cap.setStyleSheet("color:#DfE3E8; font-size:13px; letter-spacing:3px;")
+        fl.addWidget(dealer_cap)
         self.dealer_row = QHBoxLayout()
         self.dealer_row.setAlignment(Qt.AlignCenter)
         self.dealer_row.setSpacing(8)
@@ -2599,30 +2530,11 @@ class BlackjackScreen(QWidget):
         v.setSpacing(6)
 
         head = QHBoxLayout()
-
-        # Unified Name Badge
-        badge = QFrame()
-        badge.setObjectName("nameBadgeActive" if is_current else "nameBadgeNormal")
-        badge.setFixedHeight(28)
-        badge_layout = QHBoxLayout(badge)
-        badge_layout.setContentsMargins(0, 0, 10, 0)
-        badge_layout.setSpacing(8)
-
-        avatar = QLabel(p["name"][0].upper() if p["name"] else "?")
-        avatar.setObjectName("avatar")
-        avatar.setFixedSize(28, 28)
-        avatar.setAlignment(Qt.AlignCenter)
-
-        name_lbl = QLabel(p["name"])
-        name_lbl.setObjectName("badgeTextActive" if is_current else "badgeTextNormal")
-
-        badge_layout.addWidget(avatar)
-        badge_layout.addWidget(name_lbl)
-
+        name = QLabel(p["name"])
+        name.setObjectName("seatName")
         bal = QLabel(f"${int(p['balance'])}")
         bal.setObjectName("seatBal")
-
-        head.addWidget(badge)
+        head.addWidget(name)
         head.addStretch(1)
         head.addWidget(bal)
         v.addLayout(head)
@@ -2679,7 +2591,6 @@ class RouletteScreen(QWidget):
         self.base_text = {}    # bet_type -> base label
         self._last_spin_n = None
         self._pending_win = None
-        self._staked_this_round = 0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -2866,7 +2777,8 @@ class RouletteScreen(QWidget):
         if self._pending_win is not None:
             # Update stats
             self.app.profile.stats["roulette_played"] += 1
-            total_bet = self._staked_this_round
+            past_active = self.app.game_state.get("active_bets", {}).get(self.app.player_id, []) if self.app.game_state else []
+            total_bet = sum(b.get("amount", 0) for b in past_active)
             self.app.profile.stats["total_wagered"] += total_bet
             if self._pending_win > 0:
                 self.app.profile.stats["roulette_wins"] += 1
@@ -2874,7 +2786,6 @@ class RouletteScreen(QWidget):
                 if net_win > self.app.profile.stats["biggest_win"]:
                     self.app.profile.stats["biggest_win"] = net_win
             self.app.profile.save()
-            self._staked_this_round = 0
 
             if self._pending_win > 0:
                 show_celebration(self, f"+${int(self._pending_win)}")
@@ -2911,7 +2822,6 @@ class RouletteScreen(QWidget):
 
         active = state.get("active_bets", {}).get(self.app.player_id, [])
         if active:
-            self._staked_this_round = sum(b.get("amount", 0) for b in active)
             totals = {}
             for bet in active:
                 totals[bet["type"]] = totals.get(bet["type"], 0) + bet["amount"]
@@ -3316,35 +3226,12 @@ class PokerScreen(QWidget):
         v.setContentsMargins(12, 8, 12, 10)
         v.setSpacing(4)
         head = QHBoxLayout()
-
-        # Unified Name Badge
-        badge = QFrame()
-        badge.setObjectName("nameBadgeActive" if seat["is_actor"] else "nameBadgeNormal")
-        badge.setFixedHeight(28)
-        badge_layout = QHBoxLayout(badge)
-        badge_layout.setContentsMargins(0, 0, 10, 0)
-        badge_layout.setSpacing(8)
-
-        avatar_char = seat["name"][0].upper() if seat["name"] else "?"
-        # Strip emoji from avatar if it's a bot
-        if avatar_char > "☀":
-            avatar_char = "🤖"
-
-        avatar = QLabel(avatar_char)
-        avatar.setObjectName("avatar")
-        avatar.setFixedSize(28, 28)
-        avatar.setAlignment(Qt.AlignCenter)
-
-        name_lbl = QLabel(seat["name"])
-        name_lbl.setObjectName("badgeTextActive" if seat["is_actor"] else "badgeTextNormal")
-
-        badge_layout.addWidget(avatar)
-        badge_layout.addWidget(name_lbl)
-
+        nm = QLabel(seat["name"])
+        nm.setObjectName("seatName")
+        nm.setStyleSheet("font-size:13px; font-weight:800; color:#fff; background:transparent;")
         ch = QLabel(f"${int(seat['chips'])}")
         ch.setObjectName("seatBal")
-
-        head.addWidget(badge)
+        head.addWidget(nm)
         head.addStretch(1)
         head.addWidget(ch)
         v.addLayout(head)
@@ -3594,80 +3481,134 @@ class AchievementsScreen(QWidget):
                 row += 1
 
 
-class CrashCanvas(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.multiplier = 1.00
-        self.state = "waiting_for_bets"
-        self.crashed_at = None
-        self.history = []
+class WheelView(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setMinimumSize(400, 400)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.angle = 0.0
+        self.spinning = False
+        self.on_spin_end = None
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._frame = 0
+        self._frames = 90
+        self._start_angle = 0.0
+        self._sweep = 0.0
+
+        self.segments = (
+            [1] * 24 + [2] * 15 + [5] * 7 + [10] * 4 + [20] * 2 + [40] * 2
+        )
+        self.colors = {
+            1: "#E6E6DE", 2: "#E9C46A", 5: "#D2392F",
+            10: "#2E6BD6", 20: "#2E9E5B", 40: "#7A3FB0"
+        }
+        self.text_colors = {
+            1: "#1A1A1A", 2: "#1A1A1A", 5: "#FFFFFF",
+            10: "#FFFFFF", 20: "#FFFFFF", 40: "#FFFFFF"
+        }
+
+    def spin_to(self, target_idx):
+        if target_idx < 0 or target_idx >= len(self.segments):
+            return
+
+        # Calculate target angle so the segment lands at the top (12 o'clock, which is -90 degrees in QPainter or 270 in our logic)
+        # Segments are drawn starting from 0 (3 o'clock) clockwise.
+        # Top pointer is at 270 degrees.
+        step = 360.0 / len(self.segments)
+        target_center = target_idx * step + step / 2.0
+
+        # We want target_center to end up at 270.
+        # So angle needed = 270 - target_center. We can spin multiple rotations.
+        target_deg = (270 - target_center) % 360.0
+
+        self._start_angle = self.angle % 360.0
+        delta = (target_deg - self._start_angle) % 360.0
+        if delta < 0: delta += 360.0
+        self._sweep = 360.0 * 5 + delta # 5 full spins + delta
+
+        self._frame = 0
+        self.spinning = True
+        self._timer.start(16)
+
+    def _tick(self):
+        self._frame += 1
+        t = self._frame / self._frames
+        if t >= 1.0:
+            self.angle = (self._start_angle + self._sweep) % 360.0
+            self.spinning = False
+            self._timer.stop()
+            self.update()
+            if self.on_spin_end:
+                self.on_spin_end()
+            return
+        # Ease out cubic
+        ease = 1 - (1 - t) ** 3
+        self.angle = self._start_angle + self._sweep * ease
+        self.update()
 
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        side = min(self.width(), self.height())
+        cx, cy = self.width() / 2, self.height() / 2
+        r_out = side / 2 - 20
+        step = 360.0 / len(self.segments)
 
-        # Background
-        rect = QRectF(2, 2, self.width() - 4, self.height() - 4)
-        path = QPainterPath()
-        path.addRoundedRect(rect, 14, 14)
-        g = QLinearGradient(0, 0, 0, self.height())
-        g.setColorAt(0, QColor("#12161E"))
-        g.setColorAt(1, QColor("#1C212D"))
-        p.fillPath(path, QBrush(g))
-        p.setPen(QPen(QColor("#2E3440"), 2))
-        p.drawPath(path)
+        p.translate(cx, cy)
 
-        # History
-        if self.history:
-            hist_str = "  ".join(f"{x:.2f}x" for x in self.history)
-            p.setPen(QColor("#5b5f66"))
-            p.setFont(QFont("Segoe UI", 11, QFont.Bold))
-            p.drawText(QRectF(16, 16, self.width()-32, 20), Qt.AlignRight, hist_str)
+        # Pointer at top (12 o'clock)
+        p.save()
+        p.setBrush(QColor("#E5564B"))
+        p.setPen(QPen(QColor("#FFFFFF"), 2))
+        poly = [QPointF(-10, -r_out - 15), QPointF(10, -r_out - 15), QPointF(0, -r_out + 10)]
+        p.drawPolygon(poly)
+        p.restore()
 
-        # The Curve
-        if self.state in ("flying", "crashed"):
-            # We want to map [1.0, current_multiplier] to a curve from bottom-left to top-right.
-            # X goes 0 to 1 based on an arbitrary max time, or just logarithmic relative to multiplier.
-            max_mult = max(2.0, self.multiplier * 1.2)
+        p.rotate(self.angle)
 
-            p1 = QPointF(20, self.height() - 20)
+        # Draw Segments
+        rect = QRectF(-r_out, -r_out, 2 * r_out, 2 * r_out)
+        for i, mult in enumerate(self.segments):
+            start_angle = i * step
 
-            # The current tip of the line
-            x_tip = min(self.width() - 40, 20 + (self.width() - 60) * (math.log(self.multiplier) / math.log(max_mult)))
-            y_tip = self.height() - 20 - (self.height() - 60) * (self.multiplier - 1.0) / (max_mult - 1.0)
-            p2 = QPointF(x_tip, y_tip)
+            p.setBrush(QColor(self.colors[mult]))
+            p.setPen(QPen(QColor("#1A1A1A"), 1))
+            # QPainter drawPie uses 1/16th of a degree, and 0 is at 3 o'clock. Direction is counter-clockwise but we negate step for clockwise visually if we prefer, or just stick to standard.
+            # wait, Qt drawPie is counter-clockwise. Let's negate start_angle to draw clockwise.
+            p.drawPie(rect, int(-start_angle * 16), int(-step * 16))
 
-            curve = QPainterPath(p1)
-            ctrl1 = QPointF(p1.x() + (p2.x() - p1.x()) * 0.5, p1.y())
-            ctrl2 = QPointF(p1.x() + (p2.x() - p1.x()) * 0.8, p2.y())
-            curve.cubicTo(ctrl1, ctrl2, p2)
+            # Draw text
+            mid_angle = math.radians(start_angle + step / 2)
+            tx = (r_out * 0.8) * math.cos(mid_angle)
+            ty = (r_out * 0.8) * math.sin(mid_angle)
 
-            color = QColor("#E5564B") if self.state == "crashed" else QColor("#3FBF6B")
-            p.setPen(QPen(color, 4))
-            p.drawPath(curve)
+            p.save()
+            p.translate(tx, ty)
+            p.rotate(start_angle + step / 2)
+            p.setPen(QColor(self.text_colors[mult]))
+            p.setFont(QFont("Segoe UI", 12, QFont.Bold))
+            p.drawText(QRectF(-20, -15, 40, 30), Qt.AlignCenter, f"{mult}x")
+            p.restore()
 
-            # Draw Rocket/Tip
-            p.setBrush(color)
-            p.setPen(Qt.NoPen)
-            p.drawEllipse(p2, 6, 6)
+        # Center Hub
+        r_in = r_out * 0.2
+        hub = QRadialGradient(QPointF(0, 0), r_in)
+        hub.setColorAt(0, QColor("#3A2A12"))
+        hub.setColorAt(1, QColor("#101010"))
+        p.setBrush(QBrush(hub))
+        p.setPen(QPen(QColor("#B8860B"), 3))
+        p.drawEllipse(QPointF(0, 0), r_in, r_in)
 
-        # Huge Multiplier Label
-        text_color = QColor("#E5564B") if self.state == "crashed" else QColor("#E9C46A")
-        p.setPen(text_color)
-        p.setFont(QFont("Segoe UI", 56, QFont.Bold))
-        display_val = self.crashed_at if self.state == "crashed" and self.crashed_at else self.multiplier
-        p.drawText(rect, Qt.AlignCenter, f"{display_val:.2f}x")
 
-        if self.state == "crashed":
-            p.setFont(QFont("Segoe UI", 24, QFont.Bold))
-            p.drawText(QRectF(0, self.height()/2 + 40, self.width(), 40), Qt.AlignCenter, "CRASHED!")
-
-class CrashScreen(QWidget):
+class WheelOfFortuneScreen(QWidget):
     def __init__(self, app):
         super().__init__()
         self.app = app
-        self._bet_placed = False
-        self._cashed_out = False
+        self.cells = {}
+        self._last_spin_n = None
+        self._pending_win = None
+        self._staked_this_round = 0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -3687,70 +3628,133 @@ class CrashScreen(QWidget):
         bl.addWidget(sound_toggle_button(self.app))
         root.addWidget(bar)
 
-        body = QVBoxLayout()
-        body.setContentsMargins(24, 18, 24, 10)
-        body.setSpacing(16)
+        body = QHBoxLayout()
+        body.setContentsMargins(20, 16, 20, 16)
+        body.setSpacing(20)
 
-        self.canvas = CrashCanvas(self)
-        shadow(self.canvas, blur=34, dy=10)
-        body.addWidget(self.canvas, 1)
+        # Left: Wheel
+        left = QFrame()
+        left.setObjectName("panel")
+        left.setMinimumWidth(450)
+        shadow(left, blur=34, dy=8)
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(20, 20, 20, 20)
+        self.wheel = WheelView()
+        self.wheel.on_spin_end = self._on_spin_end
+        lv.addWidget(self.wheel, 1)
+
+        self.spin_btn = make_button("SPIN WHEEL", "gold", self._spin, big=True)
+        lv.addWidget(self.spin_btn)
+        body.addWidget(left, 0)
+
+        # Right: Board & Controls
+        right = QVBoxLayout()
+        right.setSpacing(14)
+
+        board = QFrame()
+        board.setObjectName("felt")
+        shadow(board, blur=30, dy=8)
+        gv = QVBoxLayout(board)
+        gv.setContentsMargins(18, 18, 18, 18)
+        gv.addLayout(self._build_board())
+        right.addWidget(board, 1)
+
+        chips_wrap = QFrame()
+        chips_wrap.setObjectName("panel")
+        cwl = QVBoxLayout(chips_wrap)
+        cwl.setContentsMargins(16, 12, 16, 12)
+        cwl.setSpacing(8)
+        self.chipbar = ChipBar(self.app)
+        cwl.addWidget(self.chipbar)
+
+        act = QHBoxLayout()
+        act.setSpacing(10)
+        act.addWidget(make_button("Clear Bets", "charcoal", self._clear))
+        act.addWidget(make_button("Rebet", "charcoal", self._rebet))
+        act.addStretch(1)
+        cwl.addLayout(act)
+        right.addWidget(chips_wrap, 0)
+
+        body.addLayout(right, 1)
 
         bw = QWidget()
         bw.setLayout(body)
         root.addWidget(bw, 1)
 
-        controls = QFrame()
-        controls.setFixedHeight(150)
-        cl = QVBoxLayout(controls)
-        cl.setContentsMargins(18, 10, 18, 14)
-        cl.setSpacing(10)
-        self.chipbar = ChipBar(self.app)
-        cl.addWidget(self.chipbar)
+    def _cell(self, key, bg, fg):
+        b = QPushButton(f"{key}x")
+        b.setCursor(Qt.PointingHandCursor)
+        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        b.setStyleSheet(
+            f"QPushButton{{background:{bg};color:{fg};border:2px solid rgba(255,255,255,0.25);"
+            f"border-radius:12px;font-weight:800;font-size:24px;padding:2px;}}"
+            f"QPushButton:hover{{border:2px solid {GOLD};}}"
+        )
+        b.clicked.connect(lambda _=False, k=key: self._on_cell(k))
+        self.cells[key] = b
+        return b
 
-        brow = QHBoxLayout()
-        brow.addStretch(1)
-        self.action_btn = make_button("PLACE BET", "gold", self._on_action, big=True)
-        self.action_btn.setMinimumWidth(240)
-        brow.addWidget(self.action_btn)
-        brow.addStretch(1)
-        cl.addLayout(brow)
-        root.addWidget(controls)
+    def _build_board(self):
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        grid.addWidget(self._cell("1", "#E6E6DE", "#1A1A1A"), 0, 0, 1, 2)
+        grid.addWidget(self._cell("2", "#E9C46A", "#1A1A1A"), 0, 2, 1, 2)
+        grid.addWidget(self._cell("5", "#D2392F", "#FFFFFF"), 1, 0, 1, 2)
+        grid.addWidget(self._cell("10", "#2E6BD6", "#FFFFFF"), 1, 2, 1, 2)
+        grid.addWidget(self._cell("20", "#2E9E5B", "#FFFFFF"), 2, 0, 1, 2)
+        grid.addWidget(self._cell("40", "#7A3FB0", "#FFFFFF"), 2, 2, 1, 2)
+        return grid
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._tick)
-        self._ticks = 0
+    def _on_cell(self, key):
+        amount = self.app.active_chip
+        me = (self.app.game_state or {}).get("players", {}).get(self.app.player_id)
+        if me and me["balance"] < amount:
+            return
+        cell = self.cells.get(key)
+        if cell is not None:
+            color = ChipBar.COLORS.get(amount, "#888")
+            start = self.chipbar.mapTo(self, QPoint(self.chipbar.width() // 2, 12))
+            end = cell.mapTo(self, cell.rect().center()) - QPoint(19, 19)
+            fly_chip(self, start, end, color, ChipBar._fmt(amount))
+        self.app.sound.play("chip")
+        self.app.send_action("w_bet", bet_type=key, amount=amount)
 
-    def _on_action(self):
-        state = (self.app.game_state or {}).get("state", "waiting_for_bets")
-        if state == "waiting_for_bets" and not self._bet_placed:
-            amt = self.app.active_chip
-            me = (self.app.game_state or {}).get("players", {}).get(self.app.player_id)
-            if me and me["balance"] >= amt:
-                self._bet_placed = True
-                self.app.sound.play("chip")
-                self.action_btn.setEnabled(False)
-                self.app.send_action("c_bet", amount=amt)
+    def _clear(self):
+        self.app.sound.play("click")
+        self.app.send_action("w_clear")
 
-        elif state == "flying" and self._bet_placed and not self._cashed_out:
-            self._cashed_out = True
-            self.app.sound.play("win")
-            self.action_btn.setEnabled(False)
-            self.action_btn.setText(f"CASHED OUT!")
-            self.app.send_action("c_cashout")
+    def _rebet(self):
+        self.app.sound.play("chip")
+        self.app.send_action("w_rebet")
 
-    def _tick(self):
-        if self.canvas.state == "flying":
-            # Just interpolate based on server's value to make it smooth locally
-            self.canvas.multiplier += (self.target_multiplier - self.canvas.multiplier) * 0.2
-            if self.canvas.multiplier < 1.0: self.canvas.multiplier = 1.0
-            self.canvas.update()
+    def _spin(self):
+        if self.wheel.spinning:
+            return
+        self.spin_btn.setEnabled(False)
+        self.app.sound.play("spin")
+        self.app.send_action("w_spin")
 
-            if self._bet_placed and not self._cashed_out:
-                staked = 0
-                me_state = (self.app.game_state or {}).get("bets", {}).get(self.app.player_id)
-                if me_state:
-                    staked = me_state.get("amount", self.app.active_chip)
-                self.action_btn.setText(f"CASH OUT  ${int(staked * self.canvas.multiplier)}")
+    def _on_spin_end(self):
+        self.spin_btn.setEnabled(True)
+        if self._pending_win is not None:
+            # Update stats
+            self.app.profile.stats["wheel_played"] = self.app.profile.stats.get("wheel_played", 0) + 1
+            total_bet = self._staked_this_round
+            self.app.profile.stats["total_wagered"] += total_bet
+            if self._pending_win > 0:
+                self.app.profile.stats["wheel_wins"] = self.app.profile.stats.get("wheel_wins", 0) + 1
+                net_win = self._pending_win - total_bet
+                if net_win > self.app.profile.stats["biggest_win"]:
+                    self.app.profile.stats["biggest_win"] = net_win
+            self.app.profile.save()
+            self._staked_this_round = 0
+
+            if self._pending_win > 0:
+                show_celebration(self, f"+${int(self._pending_win)}")
+                self.app.sound.play("win")
+            else:
+                self.app.sound.play("lose")
+            self._pending_win = None
 
     def update_state(self, state):
         me = state.get("players", {}).get(self.app.player_id)
@@ -3758,65 +3762,24 @@ class CrashScreen(QWidget):
             self.balance_lbl.setText(f"Balance: ${int(me['balance'])}")
             self.chipbar.refresh(me["balance"])
 
-        s = state.get("state", "waiting_for_bets")
+        res = state.get("last_result")
+        spin_n = state.get("spin_n")
 
-        self.target_multiplier = state.get("current_multiplier", 1.0)
+        if res and spin_n is not None and spin_n != self._last_spin_n:
+            self._last_spin_n = spin_n
+            self._pending_win = state.get("last_win", {}).get(self.app.player_id, 0)
+            self.wheel.spin_to(res["index"])
 
-        # State transition handlers
-        if s == "waiting_for_bets" and self.canvas.state != "waiting_for_bets":
-            self.canvas.state = s
-            self.canvas.multiplier = 1.00
-            self._bet_placed = False
-            self._cashed_out = False
-            self.canvas.crashed_at = None
-            self.action_btn.setText("PLACE BET")
-            self.action_btn.setProperty("variant", "gold")
-            self.action_btn.style().unpolish(self.action_btn)
-            self.action_btn.style().polish(self.action_btn)
-            self.action_btn.setEnabled(True)
-            self.timer.stop()
-            self.canvas.update()
+        # Reset labels to base
+        for k, b in self.cells.items():
+            b.setText(f"{k}x")
 
-        elif s == "flying":
-            if self.canvas.state != "flying":
-                self.canvas.state = s
-                self.canvas.history = state.get("history", [])
-                self.timer.start(33) # ~30 fps
-                if self._bet_placed:
-                    self.action_btn.setProperty("variant", "charcoal")
-                    self.action_btn.setStyleSheet("background: #3FBF6B; color: #fff;") # Force green override
-                    self.action_btn.setEnabled(True)
-                else:
-                    self.action_btn.setText("FLYING...")
-                    self.action_btn.setEnabled(False)
-
-        elif s == "crashed" and self.canvas.state != "crashed":
-            self.canvas.state = s
-            self.canvas.crashed_at = state.get("crash_point", self.canvas.multiplier)
-            self.timer.stop()
-            self.app.sound.play("lose")
-            self.action_btn.setStyleSheet("") # Clear override
-            self.action_btn.setProperty("variant", "crimson")
-            self.action_btn.style().unpolish(self.action_btn)
-            self.action_btn.style().polish(self.action_btn)
-            self.action_btn.setText("CRASHED")
-            self.action_btn.setEnabled(False)
-            self.canvas.update()
-
-            # Update stats logic specifically for Crash
-            bet_info = state.get("bets", {}).get(self.app.player_id)
-            if bet_info:
-                self.app.profile.stats["crash_played"] = self.app.profile.stats.get("crash_played", 0) + 1
-                self.app.profile.stats["total_wagered"] += bet_info["amount"]
-                if bet_info["cashed_out"]:
-                    self.app.profile.stats["crash_wins"] = self.app.profile.stats.get("crash_wins", 0) + 1
-                    net_win = bet_info["won"] - bet_info["amount"]
-                    if net_win > self.app.profile.stats["biggest_win"]:
-                        self.app.profile.stats["biggest_win"] = net_win
-                self.app.profile.save()
-
-# --------------------------------------------------------------------------
-# Main window / controller
+        active = state.get("bets", {}).get(self.app.player_id, {})
+        if active:
+            self._staked_this_round = sum(active.values())
+            for k, amt in active.items():
+                if k in self.cells:
+                    self.cells[k].setText(f"{k}x\n${int(amt)}")
 
 # --------------------------------------------------------------------------
 # Main window / controller
@@ -3962,7 +3925,7 @@ class StatsScreen(QWidget):
         self.break_grid.addWidget(self._make_game_row("ROULETTE", s["roulette_played"], s["roulette_wins"]), 1, 0)
         self.break_grid.addWidget(self._make_game_row("SLOTS", s["slots_played"], s["slots_wins"]), 2, 0)
         self.break_grid.addWidget(self._make_game_row("POKER", s["poker_played"], s["poker_wins"]), 3, 0)
-        self.break_grid.addWidget(self._make_game_row("CRASH", s.get("crash_played", 0), s.get("crash_wins", 0)), 4, 0)
+        self.break_grid.addWidget(self._make_game_row("WHEEL", s.get("wheel_played", 0), s.get("wheel_wins", 0)), 4, 0)
 
 class Bridge(QObject):
 
@@ -4006,10 +3969,10 @@ class CasinoApp(QMainWindow):
         self.roulette = RouletteScreen(self)
         self.slots = SlotsScreen(self)
         self.poker = PokerScreen(self)
-        self.crash = CrashScreen(self)
+        self.wheel = WheelOfFortuneScreen(self)
         self.achievements = AchievementsScreen(self)
         self.stats_screen = StatsScreen(self)
-        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker, self.crash, self.achievements, self.stats_screen):
+        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker, self.wheel, self.achievements, self.stats_screen):
             self.stack.addWidget(w)
         self.stack.setCurrentWidget(self.start)
         self._install_shortcuts()
@@ -4075,11 +4038,11 @@ class CasinoApp(QMainWindow):
         self.client.send_action("join_room", room="poker")
         self.stack.setCurrentWidget(self.poker)
 
-    def join_crash(self):
+    def join_wheel(self):
         if not self.client:
             return
-        self.client.send_action("join_room", room="crash")
-        self.stack.setCurrentWidget(self.crash)
+        self.client.send_action("join_room", room="wheel")
+        self.stack.setCurrentWidget(self.wheel)
 
     def leave_room(self):
         if self.client:
@@ -4116,11 +4079,7 @@ class CasinoApp(QMainWindow):
                 self.profile.unlock("phoenix", self)
 
         s = state.get("state")
-
-        if "crash_point" in state:
-            self.stack.setCurrentWidget(self.crash)
-            self.crash.update_state(state)
-        elif s == "lobby":
+        if s == "lobby":
             self.stack.setCurrentWidget(self.lobby)
             self.lobby.update_state(state)
         elif s == "roulette":
@@ -4132,6 +4091,9 @@ class CasinoApp(QMainWindow):
         elif s == "poker":
             self.stack.setCurrentWidget(self.poker)
             self.poker.update_state(state)
+        elif s == "wheel":
+            self.stack.setCurrentWidget(self.wheel)
+            self.wheel.update_state(state)
         else:
             self.stack.setCurrentWidget(self.blackjack)
             self.blackjack.update_state(state)
