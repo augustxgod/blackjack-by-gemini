@@ -1430,6 +1430,8 @@ QScrollBar:horizontal { height: 10px; background: transparent; margin: 0; }
 QScrollBar:vertical   { width: 10px; background: transparent; margin: 0; }
 QScrollBar::handle { background: rgba(255,255,255,0.18); border-radius: 5px; }
 QScrollBar::add-line, QScrollBar::sub-line { width:0; height:0; }
+
+QLabel#dealerSpeech { color: #E9C46A; font-size: 15px; font-style: italic; font-weight: 600; }
 """
 
 
@@ -2163,6 +2165,11 @@ class BlackjackScreen(QWidget):
         self.dealer_score.setStyleSheet("color:#fff; font-size:13px;")
         fl.addWidget(self.dealer_score)
 
+        self.dealer_speech_lbl = QLabel("")
+        self.dealer_speech_lbl.setObjectName("dealerSpeech")
+        self.dealer_speech_lbl.setAlignment(Qt.AlignCenter)
+        fl.addWidget(self.dealer_speech_lbl)
+
         fl.addStretch(1)
 
         seats_scroll = QScrollArea()
@@ -2303,6 +2310,30 @@ class BlackjackScreen(QWidget):
         if self._new_cards > 0:
             self.app.sound.play("deal")
 
+        # dealer speech logic
+        speech_text = ""
+        if s == "betting":
+            speech_text = "Делайте ваши ставки, господа. Игра начинается."
+        elif s == "playing":
+            if state.get("current_player_id") == self.app.player_id and me and me.get("hands"):
+                idx = me["current_hand_idx"]
+                if idx < len(me["hands"]):
+                    h = me["hands"][idx]
+                    if h.get("is_busted"):
+                        speech_text = "Перебор! Карты дилеру."
+                    else:
+                        speech_text = f"У вас {h['score']}. Будете брать карту или остановитесь?"
+        elif s == "game_over" and me and me.get("message"):
+            msg = me["message"].strip()
+            outcome = "Win" if ("Win" in msg or "Blackjack" in msg) else ("Loss" if ("Lose" in msg or "Bust" in msg) else "Push")
+            if outcome == "Win":
+                speech_text = "Выигрыш ваш, отличная игра!"
+            elif outcome == "Loss":
+                speech_text = "Дилер побеждает. Повезет в следующий раз."
+            else:
+                speech_text = "Пуш. Ставки остаются при своих."
+        self.dealer_speech_lbl.setText(speech_text)
+
         # history + win/lose feedback on the playing -> game_over transition
         if self.prev_state in ("playing", "dealer_turn") and s == "game_over" and me and me.get("message"):
             msg = me["message"].strip()
@@ -2423,6 +2454,11 @@ class RouletteScreen(QWidget):
         bl.addSpacing(12)
         bl.addWidget(sound_toggle_button(self.app))
         root.addWidget(bar)
+
+        self.croupier_speech_lbl = QLabel("Пожалуйста, делайте ваши ставки на поле.")
+        self.croupier_speech_lbl.setObjectName("dealerSpeech")
+        self.croupier_speech_lbl.setAlignment(Qt.AlignCenter)
+        root.addWidget(self.croupier_speech_lbl)
 
         body = QHBoxLayout()
         body.setContentsMargins(20, 16, 20, 16)
@@ -2548,10 +2584,12 @@ class RouletteScreen(QWidget):
             start = self.chipbar.mapTo(self, QPoint(self.chipbar.width() // 2, 12))
             end = cell.mapTo(self, cell.rect().center()) - QPoint(19, 19)
             fly_chip(self, start, end, color, ChipBar._fmt(amount))
+        self.croupier_speech_lbl.setText("Пожалуйста, делайте ваши ставки на поле.")
         self.app.sound.play("chip")
         self.app.place_roulette_bet(key)
 
     def _clear(self):
+        self.croupier_speech_lbl.setText("Пожалуйста, делайте ваши ставки на поле.")
         self.app.sound.play("click")
         self.app.send_action("r_clear")
 
@@ -2563,11 +2601,20 @@ class RouletteScreen(QWidget):
         if self.wheel.spinning:
             return
         self.spin_btn.setEnabled(False)
+        self.croupier_speech_lbl.setText("Колесо запущено! Ставок больше нет!")
         self.app.sound.play("spin")
         self.app.send_action("r_spin")
 
     def _on_spin_end(self):
         self.spin_btn.setEnabled(True)
+
+        # Croupier logic
+        if self.app.game_state and self.app.game_state.get("last_result"):
+            res = self.app.game_state["last_result"]
+            color_map = {"red": "КРАСНОЕ", "black": "ЧЕРНОЕ", "green": "ЗЕРО"}
+            ru_color = color_map.get(res["color"], "")
+            self.croupier_speech_lbl.setText(f"Выпало {res['number']}, {ru_color}! Поздравляем победителей!")
+
         if self._pending_win is not None:
             if self._pending_win > 0:
                 show_celebration(self, f"+${int(self._pending_win)}")
