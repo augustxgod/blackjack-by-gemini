@@ -1146,6 +1146,9 @@ class Server:
         self.crash_game = CrashGame(self)
         self.clients = {}
 
+    def broadcast_state(self):
+        pass
+
     def start(self):
         threading.Thread(target=self.accept_clients, daemon=True).start()
 
@@ -1367,6 +1370,9 @@ class _LocalBackend:
         self.crash_game = CrashGame(self)
         self.clients = {}
 
+    def broadcast_state(self):
+        pass
+
 
 class LocalClient:
     def __init__(self, player_id, name):
@@ -1377,6 +1383,10 @@ class LocalClient:
         self.room = "lobby"
         self.server.global_players[player_id] = {"name": name, "balance": 1000, "room": "lobby"}
         self.server.clients["local_socket_mock"] = player_id
+
+        # Override the broadcast method on the mock server so background threads
+        # (like CrashGame's flight loop) can successfully push states to the UI
+        self.server.broadcast_state = self._trigger_update
 
     def connect(self):
         self._trigger_update()
@@ -1609,6 +1619,12 @@ QScrollBar::handle { background: rgba(255,255,255,0.18); border-radius: 5px; }
 QScrollBar::add-line, QScrollBar::sub-line { width:0; height:0; }
 
 QLabel#dealerSpeech { color: #E9C46A; font-size: 15px; font-style: italic; font-weight: 600; }
+
+QLabel#avatar { background: #E9C46A; color: #1c1606; font-size: 14px; font-weight: 800; border-radius: 14px; }
+QFrame#nameBadgeNormal { background: rgba(255,255,255,0.06); border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); }
+QFrame#nameBadgeActive { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #F2D277, stop:1 #CFA02A); border-radius: 14px; border: 1px solid #FFD700; }
+QLabel#badgeTextNormal { color: #fff; font-size: 13px; font-weight: 800; background: transparent; }
+QLabel#badgeTextActive { color: #1c1606; font-size: 13px; font-weight: 800; background: transparent; }
 """
 
 
@@ -2335,10 +2351,27 @@ class BlackjackScreen(QWidget):
         self.rules_lbl.setStyleSheet("color: rgba(233,196,106,0.85); font-size:13px; letter-spacing:2px; font-weight:700;")
         fl.addWidget(self.rules_lbl)
 
-        dealer_cap = QLabel("DEALER")
-        dealer_cap.setAlignment(Qt.AlignCenter)
-        dealer_cap.setStyleSheet("color:#DfE3E8; font-size:13px; letter-spacing:3px;")
-        fl.addWidget(dealer_cap)
+        # Unified Name Badge for Dealer
+        dealer_badge = QFrame()
+        dealer_badge.setObjectName("nameBadgeNormal")
+        dealer_badge.setFixedHeight(28)
+        dealer_layout = QHBoxLayout(dealer_badge)
+        dealer_layout.setContentsMargins(0, 0, 10, 0)
+        dealer_layout.setSpacing(8)
+        dealer_layout.setAlignment(Qt.AlignCenter)
+
+        avatar = QLabel("D")
+        avatar.setObjectName("avatar")
+        avatar.setFixedSize(28, 28)
+        avatar.setAlignment(Qt.AlignCenter)
+
+        name_lbl = QLabel("DEALER")
+        name_lbl.setObjectName("badgeTextNormal")
+
+        dealer_layout.addWidget(avatar)
+        dealer_layout.addWidget(name_lbl)
+
+        fl.addWidget(dealer_badge, alignment=Qt.AlignCenter)
         self.dealer_row = QHBoxLayout()
         self.dealer_row.setAlignment(Qt.AlignCenter)
         self.dealer_row.setSpacing(8)
@@ -2566,11 +2599,30 @@ class BlackjackScreen(QWidget):
         v.setSpacing(6)
 
         head = QHBoxLayout()
-        name = QLabel(p["name"])
-        name.setObjectName("seatName")
+
+        # Unified Name Badge
+        badge = QFrame()
+        badge.setObjectName("nameBadgeActive" if is_current else "nameBadgeNormal")
+        badge.setFixedHeight(28)
+        badge_layout = QHBoxLayout(badge)
+        badge_layout.setContentsMargins(0, 0, 10, 0)
+        badge_layout.setSpacing(8)
+
+        avatar = QLabel(p["name"][0].upper() if p["name"] else "?")
+        avatar.setObjectName("avatar")
+        avatar.setFixedSize(28, 28)
+        avatar.setAlignment(Qt.AlignCenter)
+
+        name_lbl = QLabel(p["name"])
+        name_lbl.setObjectName("badgeTextActive" if is_current else "badgeTextNormal")
+
+        badge_layout.addWidget(avatar)
+        badge_layout.addWidget(name_lbl)
+
         bal = QLabel(f"${int(p['balance'])}")
         bal.setObjectName("seatBal")
-        head.addWidget(name)
+
+        head.addWidget(badge)
         head.addStretch(1)
         head.addWidget(bal)
         v.addLayout(head)
@@ -3264,12 +3316,35 @@ class PokerScreen(QWidget):
         v.setContentsMargins(12, 8, 12, 10)
         v.setSpacing(4)
         head = QHBoxLayout()
-        nm = QLabel(seat["name"])
-        nm.setObjectName("seatName")
-        nm.setStyleSheet("font-size:13px; font-weight:800; color:#fff; background:transparent;")
+
+        # Unified Name Badge
+        badge = QFrame()
+        badge.setObjectName("nameBadgeActive" if seat["is_actor"] else "nameBadgeNormal")
+        badge.setFixedHeight(28)
+        badge_layout = QHBoxLayout(badge)
+        badge_layout.setContentsMargins(0, 0, 10, 0)
+        badge_layout.setSpacing(8)
+
+        avatar_char = seat["name"][0].upper() if seat["name"] else "?"
+        # Strip emoji from avatar if it's a bot
+        if avatar_char > "☀":
+            avatar_char = "🤖"
+
+        avatar = QLabel(avatar_char)
+        avatar.setObjectName("avatar")
+        avatar.setFixedSize(28, 28)
+        avatar.setAlignment(Qt.AlignCenter)
+
+        name_lbl = QLabel(seat["name"])
+        name_lbl.setObjectName("badgeTextActive" if seat["is_actor"] else "badgeTextNormal")
+
+        badge_layout.addWidget(avatar)
+        badge_layout.addWidget(name_lbl)
+
         ch = QLabel(f"${int(seat['chips'])}")
         ch.setObjectName("seatBal")
-        head.addWidget(nm)
+
+        head.addWidget(badge)
         head.addStretch(1)
         head.addWidget(ch)
         v.addLayout(head)
@@ -3671,7 +3746,11 @@ class CrashScreen(QWidget):
             self.canvas.update()
 
             if self._bet_placed and not self._cashed_out:
-                self.action_btn.setText(f"CASH OUT  ${int(self.app.active_chip * self.canvas.multiplier)}")
+                staked = 0
+                me_state = (self.app.game_state or {}).get("bets", {}).get(self.app.player_id)
+                if me_state:
+                    staked = me_state.get("amount", self.app.active_chip)
+                self.action_btn.setText(f"CASH OUT  ${int(staked * self.canvas.multiplier)}")
 
     def update_state(self, state):
         me = state.get("players", {}).get(self.app.player_id)
@@ -4037,7 +4116,11 @@ class CasinoApp(QMainWindow):
                 self.profile.unlock("phoenix", self)
 
         s = state.get("state")
-        if s == "lobby":
+
+        if "crash_point" in state:
+            self.stack.setCurrentWidget(self.crash)
+            self.crash.update_state(state)
+        elif s == "lobby":
             self.stack.setCurrentWidget(self.lobby)
             self.lobby.update_state(state)
         elif s == "roulette":
@@ -4049,9 +4132,6 @@ class CasinoApp(QMainWindow):
         elif s == "poker":
             self.stack.setCurrentWidget(self.poker)
             self.poker.update_state(state)
-        elif s == "crash":
-            self.stack.setCurrentWidget(self.crash)
-            self.crash.update_state(state)
         else:
             self.stack.setCurrentWidget(self.blackjack)
             self.blackjack.update_state(state)
