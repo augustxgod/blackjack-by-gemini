@@ -1097,6 +1097,11 @@ class Server:
                             if room_name == "blackjack":
                                 self.blackjack_game.remove_player(pid)
                             self.global_players[pid]["room"] = "lobby"
+                        elif action == "claim_welfare":
+                            if self.global_players[pid]["balance"] <= 0:
+                                self.global_players[pid]["balance"] = 1000
+                                if pid in self.blackjack_game.players:
+                                    self.blackjack_game.players[pid].balance = 1000
                         elif self.global_players[pid]["room"] == "blackjack":
                             if action == "bet":
                                 self.blackjack_game.place_bet(pid, msg["amount"])
@@ -1305,8 +1310,63 @@ class LocalClient:
         self._trigger_update()
 
 
+
+class ProfileManager:
+    def __init__(self, filepath="casino_save.json"):
+        self.filepath = filepath
+        self.name = "Player"
+        self.balance = 1000
+        self.welfare_claimed = False
+        self.achievements = {
+            "high_roller": False,
+            "jackpot_king": False,
+            "poker_shark": False,
+            "zero_hero": False,
+            "natural_21": False,
+            "phoenix": False
+        }
+        self.load()
+
+    def load(self):
+        import json, os
+        if os.path.exists(self.filepath):
+            try:
+                with open(self.filepath, "r") as f:
+                    data = json.load(f)
+                    self.name = data.get("name", self.name)
+                    self.balance = data.get("balance", self.balance)
+                    self.welfare_claimed = data.get("welfare_claimed", self.welfare_claimed)
+                    loaded_ach = data.get("achievements", {})
+                    for k in self.achievements:
+                        self.achievements[k] = loaded_ach.get(k, False)
+            except Exception as e:
+                print(f"Failed to load profile: {e}")
+
+    def save(self):
+        import json
+        data = {
+            "name": self.name,
+            "balance": self.balance,
+            "welfare_claimed": self.welfare_claimed,
+            "achievements": self.achievements
+        }
+        try:
+            with open(self.filepath, "w") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Failed to save profile: {e}")
+
+    def unlock(self, key, app):
+        if key in self.achievements and not self.achievements[key]:
+            self.achievements[key] = True
+            self.save()
+            # Show a global UI flourish via the main app
+            if app:
+                app.show_achievement_notification(key)
+
 # ==========================================================================
 # GUI  (new — PySide6 / Qt 6)
+
 # ==========================================================================
 
 # Standard European wheel order and red pockets.
@@ -1998,6 +2058,11 @@ class LobbyScreen(QWidget):
         bl.addStretch(1)
         bl.addWidget(self.balance_lbl)
         bl.addSpacing(12)
+
+        achv_btn = make_button("🏆 ACHIEVEMENTS", "gold", lambda: [self.app.achievements.refresh(), self.app.stack.setCurrentWidget(self.app.achievements)])
+        bl.addWidget(achv_btn)
+        bl.addSpacing(12)
+
         bl.addWidget(sound_toggle_button(self.app))
         root.addWidget(bar)
 
@@ -2241,6 +2306,8 @@ class BlackjackScreen(QWidget):
             self.history = self.history[:5]
             if outcome == "Win":
                 is_bj = "Blackjack" in msg
+                if is_bj:
+                    self.app.profile.unlock("natural_21", self.app)
                 show_celebration(self, "BLACKJACK!" if is_bj else "YOU WIN!")
                 self.app.sound.play("jackpot" if is_bj else "win")
             elif outcome == "Loss":
@@ -2522,6 +2589,10 @@ class RouletteScreen(QWidget):
                 self._pending_win = state.get("last_win", {}).get(self.app.player_id, 0)
                 self.wheel.spin_to(res["number"])
 
+        # check for zero hero unlock
+        if self._pending_win is not None and self._pending_win > 0 and res and res["number"] == 0:
+            self.app.profile.unlock("zero_hero", self.app)
+
         # reset cell labels, then mark active bets with the staked amount
         for k, b in self.cells.items():
             b.setText(self.base_text[k])
@@ -2733,6 +2804,8 @@ class SlotsScreen(QWidget):
         reels = last["reels"]
         if win > 0:
             jackpot = (reels[0] == reels[1] == reels[2])
+            if jackpot and reels[0] == "7":
+                self.app.profile.unlock("jackpot_king", self.app)
             self.win_lbl.setText(f"YOU WIN  ${int(win)}!")
             self.win_lbl.setStyleSheet("color:#E9C46A; font-size:20px; font-weight:800; background:transparent;")
             show_celebration(self, ("JACKPOT!  " if jackpot else "") + f"+${int(win)}")
@@ -3009,6 +3082,9 @@ class PokerScreen(QWidget):
         if res and state["hand_no"] != self._last_showdown_hand:
             self._last_showdown_hand = state["hand_no"]
             if 0 in res.get("winners", []):
+                win_name = res.get("names", {}).get("0", "")
+                if win_name in ["Straight", "Flush", "Full House", "Four of a Kind", "Straight Flush"]:
+                    self.app.profile.unlock("poker_shark", self.app)
                 show_celebration(self, self.msg_lbl.text() or "YOU WIN!")
                 self.app.sound.play("win")
             else:
@@ -3063,8 +3139,103 @@ class PokerScreen(QWidget):
             self.hint_lbl.setText("Click your cards to discard, then Draw.")
 
 
+
+class AchievementsScreen(QWidget):
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        bar = QFrame()
+        bar.setObjectName("topbar")
+        bar.setFixedHeight(64)
+        bl = QHBoxLayout(bar)
+        bl.setContentsMargins(18, 0, 18, 0)
+        bl.addWidget(make_button("‹  Lobby", "charcoal", lambda: self.app.stack.setCurrentWidget(self.app.lobby)))
+        title = QLabel("TROPHY ROOM")
+        title.setStyleSheet("color:#E9C46A; font-size:18px; font-weight:800; letter-spacing:3px;")
+        bl.addStretch(1)
+        bl.addWidget(title)
+        bl.addStretch(1)
+        bl.addWidget(sound_toggle_button(self.app))
+        root.addWidget(bar)
+
+        body = QVBoxLayout()
+        body.setAlignment(Qt.AlignCenter)
+        body.setSpacing(28)
+
+        self.grid = QGridLayout()
+        self.grid.setSpacing(24)
+
+        gw = QWidget()
+        gw.setLayout(self.grid)
+        body.addWidget(gw, 0, Qt.AlignCenter)
+
+        wrap = QWidget()
+        wl = QVBoxLayout(wrap)
+        wl.addStretch(1)
+        wl.addLayout(body)
+        wl.addStretch(1)
+        root.addWidget(wrap, 1)
+
+    def refresh(self):
+        clear_layout(self.grid)
+        achievements_data = [
+            ("high_roller", "High Roller", "Bet $10,000 in any game"),
+            ("jackpot_king", "Jackpot King", "Hit 3x '7' in slots"),
+            ("poker_shark", "Poker Shark", "Win a poker hand with Straight or better"),
+            ("zero_hero", "Zero Hero", "Win a single number '0' bet in roulette"),
+            ("natural_21", "Natural 21", "Get a natural Blackjack on deal"),
+            ("phoenix", "Phoenix", "Go broke to $0, get welfare bonus, and reach $5,000+")
+        ]
+
+        row, col = 0, 0
+        for key, title, desc in achievements_data:
+            unlocked = self.app.profile.achievements.get(key, False)
+            tile = QFrame()
+            tile.setFixedSize(290, 140)
+
+            if unlocked:
+                tile.setStyleSheet("border-radius:20px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #A07A1E,stop:1 #7A5A12); border: 2px solid #E9C46A;")
+            else:
+                tile.setStyleSheet("border-radius:20px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2E3440,stop:1 #20242C); border: 1px solid rgba(255,255,255,0.1);")
+                eff = QGraphicsOpacityEffect(tile)
+                eff.setOpacity(0.6)
+                tile.setGraphicsEffect(eff)
+
+            shadow(tile, blur=20, dy=6)
+            v = QVBoxLayout(tile)
+            v.setAlignment(Qt.AlignCenter)
+            v.setSpacing(8)
+
+            t = QLabel(title)
+            t.setAlignment(Qt.AlignCenter)
+            t.setStyleSheet(f"background:transparent; color:{'#fff' if unlocked else '#8A909A'}; font-size:22px; font-weight:800; letter-spacing:1px;")
+
+            s = QLabel(desc)
+            s.setAlignment(Qt.AlignCenter)
+            s.setWordWrap(True)
+            s.setStyleSheet(f"background:transparent; color:{'rgba(255,255,255,0.9)' if unlocked else '#5b5f66'}; font-size:12px;")
+
+            status = QLabel("🏆 Unlocked!" if unlocked else "🔒 Locked")
+            status.setAlignment(Qt.AlignCenter)
+            status.setStyleSheet(f"background:transparent; color:{'#FFD700' if unlocked else '#5b5f66'}; font-size:14px; font-weight:700; margin-top:5px;")
+
+            v.addWidget(t)
+            v.addWidget(s)
+            v.addWidget(status)
+
+            self.grid.addWidget(tile, row, col)
+            col += 1
+            if col > 2:
+                col = 0
+                row += 1
+
 # --------------------------------------------------------------------------
 # Main window / controller
+
 # --------------------------------------------------------------------------
 
 class Bridge(QObject):
@@ -3085,6 +3256,7 @@ class CasinoApp(QMainWindow):
         self.active_chip = 10
         self.game_state = None
         self.sound = SoundManager()
+        self.profile = ProfileManager()
 
         # Bridge is parented to the window and the connection is explicitly
         # queued, so state pushed from the socket thread is always delivered
@@ -3107,7 +3279,8 @@ class CasinoApp(QMainWindow):
         self.roulette = RouletteScreen(self)
         self.slots = SlotsScreen(self)
         self.poker = PokerScreen(self)
-        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker):
+        self.achievements = AchievementsScreen(self)
+        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker, self.achievements):
             self.stack.addWidget(w)
         self.stack.setCurrentWidget(self.start)
         self._install_shortcuts()
@@ -3119,7 +3292,11 @@ class CasinoApp(QMainWindow):
 
     def start_singleplayer(self, name):
         try:
-            self._attach(LocalClient(self.player_id, name))
+            self.profile.name = name
+            self.profile.save()
+            local_client = LocalClient(self.player_id, name)
+            local_client.server.global_players[self.player_id]["balance"] = self.profile.balance
+            self._attach(local_client)
             self.client.connect()
             self.stack.setCurrentWidget(self.lobby)
         except Exception as e:
@@ -3175,6 +3352,8 @@ class CasinoApp(QMainWindow):
         self.stack.setCurrentWidget(self.lobby)
 
     def send_action(self, action, **kwargs):
+        if kwargs.get("amount", 0) >= 10000:
+            self.profile.unlock("high_roller", self)
         if self.client:
             self.client.send_action(action, **kwargs)
 
@@ -3184,6 +3363,18 @@ class CasinoApp(QMainWindow):
     # -- state routing (runs on the GUI thread) ------------------------------
     def on_state(self, state):
         self.game_state = state
+
+        # Check balances for phoenix achievement and welfare
+        me = state.get("players", {}).get(self.player_id)
+        if me:
+            bal = me.get("balance", 0)
+            if bal <= 0:
+                self.send_action("claim_welfare")
+                self.profile.welfare_claimed = True
+
+            if self.profile.welfare_claimed and bal >= 5000:
+                self.profile.unlock("phoenix", self)
+
         s = state.get("state")
         if s == "lobby":
             self.stack.setCurrentWidget(self.lobby)
@@ -3200,6 +3391,52 @@ class CasinoApp(QMainWindow):
         else:
             self.stack.setCurrentWidget(self.blackjack)
             self.blackjack.update_state(state)
+
+    def show_achievement_notification(self, key):
+        names = {
+            "high_roller": "High Roller",
+            "jackpot_king": "Jackpot King",
+            "poker_shark": "Poker Shark",
+            "zero_hero": "Zero Hero",
+            "natural_21": "Natural 21",
+            "phoenix": "Phoenix"
+        }
+        from PySide6.QtWidgets import QLabel
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        name = names.get(key, key)
+        self.sound.play("jackpot")
+
+        lbl = QLabel(f"🏆 Achievement Unlocked: {name}!", self)
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setStyleSheet("color:#E9C46A; font-size:22px; font-weight:800; background:rgba(0,0,0,0.8); border: 2px solid #E9C46A; border-radius: 12px; padding: 10px;")
+        lbl.adjustSize()
+        x = (self.width() - lbl.width()) // 2
+        lbl.move(x, 20)
+        lbl.show()
+        lbl.raise_()
+
+        eff = QGraphicsOpacityEffect(lbl)
+        lbl.setGraphicsEffect(eff)
+
+        a_op = QPropertyAnimation(eff, b"opacity", lbl)
+        a_op.setDuration(4000)
+        a_op.setKeyValueAt(0.0, 0.0)
+        a_op.setKeyValueAt(0.1, 1.0)
+        a_op.setKeyValueAt(0.8, 1.0)
+        a_op.setKeyValueAt(1.0, 0.0)
+
+        a_pos = QPropertyAnimation(lbl, b"pos", lbl)
+        a_pos.setDuration(4000)
+        a_pos.setStartValue(QPoint(x, -50))
+        a_pos.setKeyValueAt(0.1, QPoint(x, 20))
+        a_pos.setKeyValueAt(0.8, QPoint(x, 20))
+        a_pos.setEndValue(QPoint(x, -50))
+        a_pos.setEasingCurve(QEasingCurve.OutCubic)
+
+        a_op.finished.connect(lbl.deleteLater)
+        a_op.start(QPropertyAnimation.DeleteWhenStopped)
+        a_pos.start(QPropertyAnimation.DeleteWhenStopped)
 
     # -- keyboard shortcuts --------------------------------------------------
     def _install_shortcuts(self):
@@ -3256,6 +3493,10 @@ class CasinoApp(QMainWindow):
 
     def closeEvent(self, event):
         try:
+            if self.profile:
+                if self.game_state and self.game_state.get("players") and self.player_id in self.game_state["players"]:
+                    self.profile.balance = self.game_state["players"][self.player_id]["balance"]
+                self.profile.save()
             if self.client is not None:
                 self.client.send_action("leave_room")
                 sock = getattr(self.client, "socket", None)
