@@ -1,6 +1,6 @@
 # blackjack-by-gemini
 # 🎰 Virtual Casino — PySide6 / Qt6 Edition
-> 🚀 **Note:** The entire core engine was completely refactored, modernized, and ported from Tkinter to PySide6 by **Claude 3 Opus (v4.8)**, while ongoing feature development and project maintenance continue to be actively driven by **Jules** powered by the **Gemini 3.1 Pro** agent.
+> 🚀 **Note:** The entire core engine was completely refactored, modernized, and ported from Tkinter to PySide6 by **Claude  Opus (v4.8)**, while ongoing feature development and project maintenance continue to be actively driven by **Jules** powered by the **Gemini 3.1 Pro** agent.
 
 A modern, thread-safe, and visually stunning desktop casino suite powered by **Python 3** and **PySide6 (Qt 6)**.
 
