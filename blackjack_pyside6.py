@@ -1564,6 +1564,8 @@ class ProfileManager:
             "roulette_played": 0, "roulette_wins": 0,
             "slots_played": 0, "slots_wins": 0,
             "poker_played": 0, "poker_wins": 0,
+            "crash_played": 0, "crash_wins": 0,
+            "wheel_played": 0, "wheel_wins": 0,
             "biggest_win": 0,
             "total_wagered": 0,
             "welfare_count": 0
@@ -2394,10 +2396,25 @@ class CrashScreen(QWidget):
         amt = self.bet_input.value()
         if self.client:
             self.client.send_action("c_bet", amount=amt)
+            app = getattr(self.client, 'app', getattr(self, 'parent', lambda: None)())
+            if hasattr(app, 'profile'):
+                app.profile.stats["crash_played"] += 1
+                app.profile.stats["total_wagered"] += amt
+                app.profile.save()
 
     def on_cashout(self):
         if self.client:
             self.client.send_action("c_cashout")
+            app = getattr(self.client, 'app', getattr(self, 'parent', lambda: None)())
+            if hasattr(app, 'profile'):
+                app.profile.stats["crash_wins"] += 1
+
+                # To accurately track biggest_win, we need the win_amount.
+                # Since the client triggers cashout but doesn't immediately know the result until state updates,
+                # tracking biggest win on cashout click is wrong. It should be done in update_state when cashed_out is True.
+                app.profile.save()
+
+
 
     def update_state(self, state):
         status = state.get("state", "waiting_for_bets")
@@ -2428,9 +2445,20 @@ class CrashScreen(QWidget):
         if my_bet:
             self.my_bet_lbl.setText(f"Your Bet: {my_bet['amount']}")
             if my_bet["cashed_out"]:
-                self.my_win_lbl.setText(f"Won: {my_bet['won']}")
+                won = my_bet["won"]
+                self.my_win_lbl.setText(f"Won: {won}")
                 self.my_win_lbl.setStyleSheet("color: #2ECC71;")
+
+                # Check for biggest win safely by tracking if we already recorded this round
+                if not getattr(self, "_recorded_win", False) and won > 0:
+                    app = getattr(self.client, 'app', getattr(self, 'parent', lambda: None)())
+                    if hasattr(app, 'profile'):
+                        if won > app.profile.stats["biggest_win"]:
+                            app.profile.stats["biggest_win"] = won
+                        app.profile.save()
+                    self._recorded_win = True
             else:
+                self._recorded_win = False
                 self.my_win_lbl.setText("Won: 0")
                 self.my_win_lbl.setStyleSheet("color: #fff;")
         else:
@@ -2571,7 +2599,7 @@ class WheelOfFortuneScreen(QWidget):
 
         for val in ["1", "2", "5", "10", "20", "40"]:
             btn = QPushButton(f"{val}x")
-            btn.clicked.connect(lambda checked, v=val: self.client.send_action("w_bet", amount=self.bet_input.value(), bet_type=v) if self.client else None)
+            btn.clicked.connect(lambda checked, v=val: self._place_wheel_bet(v))
             controls.addWidget(btn)
 
         self.layout.addLayout(controls)
@@ -2593,6 +2621,16 @@ class WheelOfFortuneScreen(QWidget):
         self.bets_lbl.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.bets_lbl)
 
+    def _place_wheel_bet(self, bet_type):
+        if not self.client: return
+        amt = self.bet_input.value()
+        self.client.send_action("w_bet", amount=amt, bet_type=bet_type)
+        app = getattr(self.client, 'app', getattr(self, 'parent', lambda: None)())
+        if hasattr(app, 'profile'):
+            app.profile.stats["wheel_played"] += 1
+            app.profile.stats["total_wagered"] += amt
+            app.profile.save()
+
     def update_state(self, state):
         pid = self.client.player_id if self.client else ""
         bets = state.get("bets", {}).get(pid, {})
@@ -2612,6 +2650,12 @@ class WheelOfFortuneScreen(QWidget):
                 self.wheel_widget.spin_to(res["index"])
                 win = state.get("last_win", {}).get(pid, 0)
                 if win > 0:
+                    app = getattr(self.client, 'app', getattr(self, 'parent', lambda: None)())
+                    if hasattr(app, 'profile') and hasattr(self, 'last_spin_n') and spin_n == self.last_spin_n:
+                        app.profile.stats["wheel_wins"] += 1
+                        if win > app.profile.stats["biggest_win"]:
+                            app.profile.stats["biggest_win"] = win
+                        app.profile.save()
                     self.status_lbl.setText(f"You WON {win}!")
                 else:
                     self.status_lbl.setText(f"Result: {res.get('multiplier')}x")
@@ -2669,6 +2713,10 @@ class LobbyScreen(QWidget):
                                       "#7A5A12", "#A07A1E", "#C99A2C", self.app.join_slots), 1, 0)
         games.addWidget(ClickableTile("POKER", "Five-card draw vs bots",
                                       "#3A2A6E", "#4E3A93", "#6A52C0", self.app.join_poker), 1, 1)
+        games.addWidget(ClickableTile("CRASH", "Predict the rocket multiplier",
+                                      "#0B3D91", "#1E62C4", "#2A7EE0", self.app.join_crash), 2, 0)
+        games.addWidget(ClickableTile("WHEEL OF FORTUNE", "Spin the money wheel",
+                                      "#8A1C7C", "#B028A2", "#D635C6", self.app.join_wheel), 2, 1)
         gw = QWidget()
         gw.setLayout(games)
         body.addWidget(gw, 0, Qt.AlignCenter)
@@ -2679,6 +2727,8 @@ class LobbyScreen(QWidget):
         wl.addLayout(body)
         wl.addStretch(1)
         root.addWidget(wrap, 1)
+
+
 
     def update_state(self, state):
         me = state.get("players", {}).get(self.app.player_id)
@@ -2839,6 +2889,8 @@ class BlackjackScreen(QWidget):
             up is not None and up["rank"] == "A" and len(me["hands"]) == 1
             and two and me.get("insurance_bet", 0) == 0 and bal >= bet / 2)
 
+
+
     def update_state(self, state):
         s = state["state"]
         players = state["players"]
@@ -2954,20 +3006,36 @@ class BlackjackScreen(QWidget):
     def _seat(self, p, pid, state, s):
         is_current = (state.get("current_player_id") == pid and s == "playing")
         box = QFrame()
-        box.setObjectName("seatCurrent" if is_current else "seat")
+        box.setObjectName("nameBadgeActive" if is_current else "nameBadgeNormal")
         box.setFixedWidth(300)
         v = QVBoxLayout(box)
         v.setContentsMargins(16, 12, 16, 14)
         v.setSpacing(6)
 
         head = QHBoxLayout()
-        name = QLabel(p["name"])
-        name.setObjectName("seatName")
-        bal = QLabel(f"${int(p['balance'])}")
-        bal.setObjectName("seatBal")
-        head.addWidget(name)
+        name_str = p["name"]
+
+        avatar_char = name_str[0].upper() if name_str else "?"
+        avatar_lbl = QLabel(avatar_char, box)
+        avatar_lbl.setObjectName("avatar")
+        avatar_lbl.setFixedSize(28, 28)
+        avatar_lbl.setAlignment(Qt.AlignCenter)
+
+        info = QVBoxLayout()
+        info.setSpacing(0)
+
+        nm = QLabel(name_str)
+        nm.setObjectName("badgeTextActive" if is_current else "badgeTextNormal")
+
+        ch = QLabel(f"${int(p['balance'])}")
+        ch.setStyleSheet("color: #E9C46A; font-size: 11px;")
+
+        info.addWidget(nm)
+        info.addWidget(ch)
+
+        head.addWidget(avatar_lbl)
+        head.addLayout(info)
         head.addStretch(1)
-        head.addWidget(bal)
         v.addLayout(head)
 
         is_me = (pid == self.app.player_id)
@@ -3225,6 +3293,8 @@ class RouletteScreen(QWidget):
                 self.app.sound.play("lose")
             self._pending_win = None
 
+
+
     def update_state(self, state):
         me = state.get("players", {}).get(self.app.player_id)
         if me:
@@ -3422,6 +3492,8 @@ class SlotsScreen(QWidget):
         self.win_lbl.setText("")
         self.app.sound.play("spin")
         self.app.send_action("s_spin", amount=bet)
+
+
 
     def update_state(self, state):
         me = state.get("players", {}).get(self.app.player_id)
@@ -3651,20 +3723,35 @@ class PokerScreen(QWidget):
     # -- rendering -----------------------------------------------------------
     def _bot_seat(self, seat, idx):
         box = QFrame()
-        box.setObjectName("seatCurrent" if seat["is_actor"] else "seat")
+        box.setObjectName("nameBadgeActive" if seat["is_actor"] else "nameBadgeNormal")
         box.setFixedWidth(210)
+
         v = QVBoxLayout(box)
         v.setContentsMargins(12, 8, 12, 10)
         v.setSpacing(4)
+
         head = QHBoxLayout()
-        nm = QLabel(seat["name"])
-        nm.setObjectName("seatName")
-        nm.setStyleSheet("font-size:13px; font-weight:800; color:#fff; background:transparent;")
-        ch = QLabel(f"${int(seat['chips'])}")
-        ch.setObjectName("seatBal")
-        head.addWidget(nm)
+        name = seat["name"]
+        avatar_char = "🤖" if name.startswith("Bot ") else (name[0].upper() if name else "?")
+        avatar_lbl = QLabel(avatar_char, box)
+        avatar_lbl.setObjectName("avatar")
+        avatar_lbl.setFixedSize(28, 28)
+        avatar_lbl.setAlignment(Qt.AlignCenter)
+
+        info = QVBoxLayout()
+        nm = QLabel(name)
+        nm.setObjectName("badgeTextActive" if seat["is_actor"] else "badgeTextNormal")
+
+        action_text = seat.get('action', seat.get('status', ''))
+        ch = QLabel(f"${int(seat['chips'])} | {action_text}" if action_text else f"${int(seat['chips'])}")
+        ch.setStyleSheet("color: #E9C46A; font-size: 11px;")
+
+        info.addWidget(nm)
+        info.addWidget(ch)
+
+        head.addWidget(avatar_lbl)
+        head.addLayout(info)
         head.addStretch(1)
-        head.addWidget(ch)
         v.addLayout(head)
 
         cards = QHBoxLayout()
@@ -3691,6 +3778,8 @@ class PokerScreen(QWidget):
         sub.setAlignment(Qt.AlignCenter)
         v.addWidget(sub)
         return box
+
+
 
     def update_state(self, state):
         seats = state["seats"]
@@ -4055,6 +4144,8 @@ class StatsScreen(QWidget):
         self.break_grid.addWidget(self._make_game_row("ROULETTE", s["roulette_played"], s["roulette_wins"]), 1, 0)
         self.break_grid.addWidget(self._make_game_row("SLOTS", s["slots_played"], s["slots_wins"]), 2, 0)
         self.break_grid.addWidget(self._make_game_row("POKER", s["poker_played"], s["poker_wins"]), 3, 0)
+        self.break_grid.addWidget(self._make_game_row("CRASH", s.get("crash_played", 0), s.get("crash_wins", 0)), 4, 0)
+        self.break_grid.addWidget(self._make_game_row("WHEEL OF FORTUNE", s.get("wheel_played", 0), s.get("wheel_wins", 0)), 5, 0)
 
 class Bridge(QObject):
 
@@ -4168,6 +4259,16 @@ class CasinoApp(QMainWindow):
         self.client.send_action("join_room", room="poker")
         self.stack.setCurrentWidget(self.poker)
 
+    def join_crash(self):
+        if not self.client: return
+        self.client.send_action("join_room", room="crash")
+        self.stack.setCurrentWidget(self.crash_screen)
+
+    def join_wheel(self):
+        if not self.client: return
+        self.client.send_action("join_room", room="wheel")
+        self.stack.setCurrentWidget(self.wheel_screen)
+
     def leave_room(self):
         if self.client:
             self.client.send_action("leave_room")
@@ -4212,10 +4313,17 @@ class CasinoApp(QMainWindow):
         elif s == "slots":
             self.stack.setCurrentWidget(self.slots)
             self.slots.update_state(state)
-        elif s == "poker":
+        elif s == "poker" or ("players" in state and "hands" in state):
             self.stack.setCurrentWidget(self.poker)
             self.poker.update_state(state)
+        elif s in ("flying", "crashed") or "crash_point" in state:
+            self.stack.setCurrentWidget(self.crash_screen)
+            self.crash_screen.update_state(state)
+        elif s in ("spinning", "result") or "spin_n" in state or (self.client and getattr(self.client, "room", "") == "wheel"):
+            self.stack.setCurrentWidget(self.wheel_screen)
+            self.wheel_screen.update_state(state)
         else:
+            self.game_state = state
             self.stack.setCurrentWidget(self.blackjack)
             self.blackjack.update_state(state)
 
