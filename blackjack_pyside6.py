@@ -2087,13 +2087,31 @@ class ChipBar(QWidget):
         b.setCursor(Qt.PointingHandCursor)
         color = self.COLORS[d]
         tc = "#1a1a1a" if d in (1, 10000) else "#ffffff"
-        ring = "#FFD700" if active else "rgba(255,255,255,0.55)"
+        ring = "#FFFFFF" if active else "transparent"
         bw = 3 if active else 2
+        scale = "transform: scale(1.1);" if active else ""
+        opacity = "1.0" if active else "0.4"
+
+        # We simulate opacity using rgba for the background color, but since we have hex colors,
+        # standard pyqt stylesheet doesn't support generic opacity easily on QPushButton unless it's an effect.
+        # Alternatively, QGraphicsOpacityEffect can be used, but since we are modifying stylesheets:
+        if not active:
+            # simple trick: just dim the text and border, since hex to rgba is complex without a helper.
+            # let's just use standard Qt properties if needed, but for now we'll stick to a simpler dimming
+            # if we can't reliably do 0.4 opacity on hex strings inside a pure string replacement.
+            pass
+
         b.setStyleSheet(
             f"QPushButton{{background:{color};color:{tc};border:{bw}px solid {ring};"
-            f"border-radius:28px;font-weight:800;font-size:12px;padding:0;}}"
-            f"QPushButton:hover{{border:3px solid #FFD700;}}"
+            f"border-radius:28px;font-weight:800;font-size:14px;padding:0;}}"
+            f"QPushButton:hover{{border:3px solid #FFFFFF;}}"
         )
+
+        if not active:
+            from PySide6.QtWidgets import QGraphicsOpacityEffect
+            eff = QGraphicsOpacityEffect()
+            eff.setOpacity(0.4)
+            b.setGraphicsEffect(eff)
         b.clicked.connect(lambda _=False, den=d: self._pick(den))
         return b
 
@@ -2263,10 +2281,11 @@ class CrashScreen(QWidget):
 
         bet_layout = QHBoxLayout()
         self.bet_btn = QPushButton("Place Bet")
+        self.bet_btn.setStyleSheet("background: #1E90FF; color: #fff; font-weight: bold; font-size: 16px; border-radius: 8px; padding: 12px; border: 2px solid #00BFFF;")
         self.bet_btn.clicked.connect(self.on_bet)
 
         self.cashout_btn = QPushButton("CASH OUT")
-        self.cashout_btn.setObjectName("actionButton")
+        self.cashout_btn.setStyleSheet("background: #2ECC71; color: #fff; font-weight: bold; font-size: 16px; border-radius: 8px; padding: 12px; border: 2px solid #00FF7F;")
         self.cashout_btn.clicked.connect(self.on_cashout)
         self.cashout_btn.setEnabled(False)
 
@@ -3387,6 +3406,11 @@ class PokerScreen(QWidget):
         self.you_lbl.setAlignment(Qt.AlignCenter)
         self.you_lbl.setStyleSheet("color:#fff; font-size:14px; font-weight:700; background:transparent;")
         fl.addWidget(self.you_lbl)
+
+        self.advisor_lbl = QLabel("")
+        self.advisor_lbl.setObjectName("advisor")
+        self.advisor_lbl.setAlignment(Qt.AlignCenter)
+        fl.addWidget(self.advisor_lbl)
         self.hand_row = QHBoxLayout()
         self.hand_row.setAlignment(Qt.AlignCenter)
         self.hand_row.setSpacing(8)
@@ -3566,6 +3590,44 @@ class PokerScreen(QWidget):
                     if new_deal or drew_now:
                         fade_in(cw)
                     self.hand_row.addWidget(cw)
+
+        if me["hand"]:
+            rank_tuple = poker_hand_rank(me["hand"])
+            cat = rank_tuple[0]
+            hand_name = poker_rank_name(rank_tuple)
+            owe = state.get("owe", 0)
+
+            advice_text = ""
+            if awaiting == "human":
+                if owe == 0:
+                    if cat >= 3:
+                        advice_text = f"🤖 Advisor: Strong hand ({hand_name})! You should definitely BET."
+                    elif cat >= 1:
+                        advice_text = f"🤖 Advisor: Made a {hand_name}. CHECK to see what happens, or place a cautious BET."
+                    else:
+                        advice_text = f"🤖 Advisor: No combination ({hand_name}). Declare a safe CHECK."
+                else:
+                    if cat >= 3:
+                        advice_text = f"🤖 Advisor: Great hand ({hand_name})! Confidently CALL or RAISE."
+                    elif cat >= 1:
+                        advice_text = f"🤖 Advisor: Low pair ({hand_name}). Worth a CALL to stay in the game."
+                    else:
+                        advice_text = f"🤖 Advisor: Weak hand ({hand_name}). Better to FOLD and save your chips."
+            elif awaiting == "draw_human":
+                if cat >= 4:
+                    advice_text = f"🤖 Advisor: Monster made hand ({hand_name})! Do NOT discard anything (Stand Pat)."
+                elif cat >= 1:
+                    advice_text = f"🤖 Advisor: Keep your {hand_name} cards! Click on the other trash cards to DISCARD them."
+                else:
+                    advice_text = f"🤖 Advisor: No pair. Keep 1 or 2 highest cards (Ace/King), click the rest to DISCARD."
+            elif awaiting == "bot":
+                advice_text = "🤖 Advisor: Watching the opponents act..."
+            else:
+                advice_text = f"🤖 Advisor: Your current hand valuation is {hand_name}."
+
+            self.advisor_lbl.setText(advice_text)
+        else:
+            self.advisor_lbl.setText("")
 
         # showdown result feedback (once per hand)
         res = state.get("results")
