@@ -12,6 +12,104 @@ thread.
 """
 
 import sys
+
+CURRENT_LANG = "en"
+
+TRANSLATIONS = {
+    "en": {
+        "Singleplayer": "Singleplayer",
+        "Multiplayer": "Multiplayer",
+        "Host Game": "Host Game",
+        "Join Game": "Join Game",
+        "LOBBY": "LOBBY",
+        "SELECT A GAME": "SELECT A GAME",
+        "BLACKJACK": "BLACKJACK",
+        "Beat the dealer to 21": "Beat the dealer to 21",
+        "ROULETTE": "ROULETTE",
+        "Spin the wheel of fortune": "Spin the wheel of fortune",
+        "SLOTS": "SLOTS",
+        "Match three to win big": "Match three to win big",
+        "POKER": "POKER",
+        "Five-card draw vs bots": "Five-card draw vs bots",
+        "CRASH": "CRASH",
+        "Predict the rocket multiplier": "Predict the rocket multiplier",
+        "WHEEL OF FORTUNE": "WHEEL OF FORTUNE",
+        "Spin the money wheel": "Spin the money wheel",
+        "Place Bet": "Place Bet",
+        "CASH OUT": "CASH OUT",
+        "Hit": "Hit",
+        "Stand": "Stand",
+        "Double": "Double",
+        "Split": "Split",
+        "Insurance": "Insurance",
+        "Start New Round": "Start New Round",
+        "Clear Bets": "Clear Bets",
+        "Rebet": "Rebet",
+        "SPIN": "SPIN",
+        "Fold": "Fold",
+        "Check": "Check",
+        "Call": "Call",
+        "Raise": "Raise",
+        "Draw": "Draw",
+        "Deal": "Deal",
+        "Balance": "Balance",
+        "Waiting for bets...": "Waiting for bets...",
+        "Your Bet: 0": "Your Bet: 0",
+        "Won: 0": "Won: 0",
+        "History:": "History:",
+        "Current Bets:": "Current Bets:",
+        "Back to Lobby": "Back to Lobby",
+        "Bet:": "Bet:"
+    },
+    "ru": {
+        "Singleplayer": "Одиночная игра",
+        "Multiplayer": "Мультиплеер",
+        "Host Game": "Создать игру",
+        "Join Game": "Присоединиться",
+        "LOBBY": "ЛОББИ",
+        "SELECT A GAME": "ВЫБЕРИТЕ ИГРУ",
+        "BLACKJACK": "БЛЭКДЖЕК",
+        "Beat the dealer to 21": "Обыграй дилера до 21",
+        "ROULETTE": "РУЛЕТКА",
+        "Spin the wheel of fortune": "Колесо фортуны",
+        "SLOTS": "СЛОТЫ",
+        "Match three to win big": "Три в ряд для победы",
+        "POKER": "ПОКЕР",
+        "Five-card draw vs bots": "Пятикарточный дро-покер",
+        "CRASH": "КРАШ",
+        "Predict the rocket multiplier": "Угадай множитель ракеты",
+        "WHEEL OF FORTUNE": "КОЛЕСО ФОРТУНЫ",
+        "Spin the money wheel": "Денежное колесо",
+        "Place Bet": "Сделать ставку",
+        "CASH OUT": "ВЫВЕСТИ",
+        "Hit": "Еще",
+        "Stand": "Хватит",
+        "Double": "Удвоить",
+        "Split": "Сплит",
+        "Insurance": "Страховка",
+        "Start New Round": "Новый раунд",
+        "Clear Bets": "Очистить",
+        "Rebet": "Повторить",
+        "SPIN": "КРУТИТЬ",
+        "Fold": "Пас",
+        "Check": "Чек",
+        "Call": "Колл",
+        "Raise": "Рейз",
+        "Draw": "Сброс",
+        "Deal": "Сдать",
+        "Balance": "Баланс",
+        "Waiting for bets...": "Ожидание ставок...",
+        "Your Bet: 0": "Ваша ставка: 0",
+        "Won: 0": "Выигрыш: 0",
+        "History:": "История:",
+        "Current Bets:": "Текущие ставки:",
+        "Back to Lobby": "В Лобби",
+        "Bet:": "Ставка:"
+    }
+}
+
+def tr(key):
+    return TRANSLATIONS.get(CURRENT_LANG, {}).get(key, key)
 import os
 import math
 import json
@@ -205,7 +303,10 @@ class Game:
 
     def add_player(self, player_id, name):
         if player_id not in self.players:
-            self.players[player_id] = Player(player_id, name)
+            p = Player(player_id, name)
+            if self.state == "betting":
+                p.state = "betting"
+            self.players[player_id] = p
             self.player_order.append(player_id)
             return True
         return False
@@ -215,6 +316,11 @@ class Game:
             del self.players[player_id]
             if player_id in self.player_order:
                 self.player_order.remove(player_id)
+
+            if not self.players:
+                self.state = "waiting_for_players"
+            elif self.state == "betting" and all(p.state in ("waiting", "finished") for p in self.players.values()):
+                self.start_round()
             return True
         return False
 
@@ -1580,7 +1686,7 @@ QPushButton[variant="charcoal"]:pressed { background: #15181E; }
 QPushButton[variant="crimson"]  { background: #8B2500; }
 QPushButton[variant="crimson"]:hover    { background: #A62C00; }
 QPushButton[variant="crimson"]:pressed  { background: #6E1D00; }
-QPushButton:disabled {
+QPushButton[variant]:disabled, QPushButton:disabled {
     background: rgba(0, 0, 0, 0.4);
     color: rgba(255, 255, 255, 0.15);
     border: 1px dashed rgba(255, 255, 255, 0.1);
@@ -2187,36 +2293,37 @@ class StartScreen(QWidget):
         sub.setAlignment(Qt.AlignCenter)
         v.addWidget(brand)
         v.addWidget(sub)
-        v.addSpacing(18)
+        v.addSpacing(20)
 
-        name_lbl = QLabel("YOUR NAME")
-        name_lbl.setObjectName("fieldLbl")
-        self.name_edit = QLineEdit("Player")
-        v.addWidget(name_lbl)
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Player Name")
+        self.name_edit.setText(app.profile.name)
         v.addWidget(self.name_edit)
-        v.addSpacing(8)
 
-        v.addWidget(make_button("Singleplayer", "gold", self._single, big=True))
+        v.addWidget(make_button(tr("Singleplayer"), "gold", self._single, big=True))
+        v.addSpacing(16)
 
-        line = QFrame()
-        line.setFixedHeight(1)
-        line.setStyleSheet("background: rgba(255,255,255,0.10);")
-        v.addSpacing(10)
-        v.addWidget(line)
-        v.addSpacing(6)
-
-        mp = QLabel("MULTIPLAYER")
-        mp.setObjectName("fieldLbl")
-        mp.setAlignment(Qt.AlignCenter)
-        v.addWidget(mp)
-        v.addWidget(make_button("Host Game", "charcoal", self._host, big=True))
-
-        ip_lbl = QLabel("OR JOIN VIA IP")
-        ip_lbl.setObjectName("fieldLbl")
-        self.ip_edit = QLineEdit("127.0.0.1")
-        v.addWidget(ip_lbl)
+        self.ip_edit = QLineEdit()
+        self.ip_edit.setPlaceholderText("IP Address (for multiplayer)")
         v.addWidget(self.ip_edit)
-        v.addWidget(make_button("Join Game", "charcoal", self._join, big=True))
+
+        v.addWidget(make_button(tr("Host Game"), "charcoal", self._host, big=True))
+        v.addWidget(make_button(tr("Join Game"), "charcoal", self._join, big=True))
+
+        lang_layout = QHBoxLayout()
+        en_btn = QPushButton("🇬🇧 EN")
+        en_btn.setFixedSize(60, 30)
+        en_btn.setStyleSheet("color: white; background: #222; border-radius: 5px;")
+        en_btn.clicked.connect(lambda: self.app.set_language("en"))
+
+        ru_btn = QPushButton("🇷🇺 RU")
+        ru_btn.setFixedSize(60, 30)
+        ru_btn.setStyleSheet("color: white; background: #222; border-radius: 5px;")
+        ru_btn.clicked.connect(lambda: self.app.set_language("ru"))
+
+        lang_layout.addWidget(en_btn)
+        lang_layout.addWidget(ru_btn)
+        v.addLayout(lang_layout)
 
         root.addWidget(card)
 
@@ -2333,12 +2440,12 @@ class CrashScreen(QWidget):
         bl = QHBoxLayout(bar)
         bl.setContentsMargins(24, 0, 24, 0)
 
-        back_btn = make_button("‹  Lobby", "crimson", self.app.leave_room)
-        title = QLabel("CRASH")
+        back_btn = make_button("‹  " + tr("LOBBY"), "crimson", self.app.leave_room)
+        title = QLabel(tr("CRASH"))
         title.setObjectName("balance")
         title.setStyleSheet("color:#C9CDD4; font-size:16px; letter-spacing:3px;")
 
-        self.balance_lbl = QLabel("Balance: —")
+        self.balance_lbl = QLabel(f"{tr('Balance')}: —")
         self.balance_lbl.setObjectName("balance")
 
         bl.addWidget(back_btn)
@@ -2358,18 +2465,18 @@ class CrashScreen(QWidget):
         left_panel.setObjectName("panel")
         left_layout = QVBoxLayout(left_panel)
 
-        self.status_lbl = QLabel("Waiting for bets...")
+        self.status_lbl = QLabel(tr("Waiting for bets..."))
         self.status_lbl.setAlignment(Qt.AlignCenter)
         self.status_lbl.setStyleSheet("color: #E9C46A; font-size: 18px;")
 
         self.chipbar = ChipBar(self.app)
 
         bet_layout = QHBoxLayout()
-        self.bet_btn = QPushButton("Place Bet")
+        self.bet_btn = QPushButton(tr("Place Bet"))
         self.bet_btn.setStyleSheet("background: #1E90FF; color: #fff; font-weight: bold; font-size: 16px; border-radius: 8px; padding: 12px; border: 2px solid #00BFFF;")
         self.bet_btn.clicked.connect(self.on_bet)
 
-        self.cashout_btn = QPushButton("CASH OUT")
+        self.cashout_btn = QPushButton(tr("CASH OUT"))
         self.cashout_btn.setStyleSheet("background: #2ECC71; color: #fff; font-weight: bold; font-size: 16px; border-radius: 8px; padding: 12px; border: 2px solid #00FF7F;")
         self.cashout_btn.clicked.connect(self.on_cashout)
         self.cashout_btn.setEnabled(False)
@@ -2377,8 +2484,8 @@ class CrashScreen(QWidget):
         bet_layout.addWidget(self.bet_btn)
         bet_layout.addWidget(self.cashout_btn)
 
-        self.my_bet_lbl = QLabel("Your Bet: 0")
-        self.my_win_lbl = QLabel("Won: 0")
+        self.my_bet_lbl = QLabel(tr("Your Bet: 0"))
+        self.my_win_lbl = QLabel(tr("Won: 0"))
 
         left_layout.addWidget(self.status_lbl)
         left_layout.addStretch()
@@ -2440,7 +2547,7 @@ class CrashScreen(QWidget):
 
         me = state.get("players", {}).get(self.app.player_id)
         if me:
-            self.balance_lbl.setText(f"Balance: ${int(me['balance'])}")
+            self.balance_lbl.setText(f"{tr('Balance')}: ${int(me['balance'])}")
             self.chipbar.refresh(me["balance"])
 
         if status == "waiting_for_bets":
@@ -2519,11 +2626,11 @@ class LobbyScreen(QWidget):
         bl.addWidget(self.balance_lbl)
         bl.addSpacing(12)
 
-        achv_btn = make_button("🏆 ACHIEVEMENTS", "gold", lambda: [self.app.achievements.refresh(), self.app.stack.setCurrentWidget(self.app.achievements)])
+        achv_btn = make_button("🏆 " + tr("ACHIEVEMENTS"), "gold", lambda: [self.app.achievements.refresh(), self.app.stack.setCurrentWidget(self.app.achievements)])
         bl.addWidget(achv_btn)
         bl.addSpacing(12)
 
-        stats_btn = make_button("📊 STATISTICS", "gold", lambda: [self.app.stats_screen.refresh(), self.app.stack.setCurrentWidget(self.app.stats_screen)])
+        stats_btn = make_button("📊 " + tr("STATISTICS"), "gold", lambda: [self.app.stats_screen.refresh(), self.app.stack.setCurrentWidget(self.app.stats_screen)])
         bl.addWidget(stats_btn)
         bl.addSpacing(12)
 
@@ -2566,7 +2673,7 @@ class LobbyScreen(QWidget):
     def update_state(self, state):
         me = state.get("players", {}).get(self.app.player_id)
         if me:
-            self.balance_lbl.setText(f"Balance: ${int(me['balance'])}")
+            self.balance_lbl.setText(f"{tr('Balance')}: ${int(me['balance'])}")
 
 
 class BlackjackScreen(QWidget):
@@ -2666,13 +2773,13 @@ class BlackjackScreen(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
-        self.bet_btn = make_button("Place Bet", "gold", self._on_bet)
-        self.hit_btn = make_button("Hit", "charcoal", lambda: self.app.send_action("hit"))
-        self.stand_btn = make_button("Stand", "charcoal", lambda: self.app.send_action("stand"))
-        self.double_btn = make_button("Double", "charcoal", lambda: self.app.send_action("double"))
-        self.split_btn = make_button("Split", "charcoal", lambda: self.app.send_action("split"))
-        self.ins_btn = make_button("Insurance", "charcoal", lambda: self.app.send_action("insurance"))
-        self.start_btn = make_button("Start New Round", "gold", lambda: self.app.send_action("start_round"))
+        self.bet_btn = make_button(tr("Place Bet"), "gold", self._on_bet)
+        self.hit_btn = make_button(tr("Hit"), "charcoal", lambda: self.app.send_action("hit"))
+        self.stand_btn = make_button(tr("Stand"), "charcoal", lambda: self.app.send_action("stand"))
+        self.double_btn = make_button(tr("Double"), "charcoal", lambda: self.app.send_action("double"))
+        self.split_btn = make_button(tr("Split"), "charcoal", lambda: self.app.send_action("split"))
+        self.ins_btn = make_button(tr("Insurance"), "charcoal", lambda: self.app.send_action("insurance"))
+        self.start_btn = make_button(tr("Start New Round"), "gold", lambda: self.app.send_action("start_round"))
         self.action_btns = [self.hit_btn, self.stand_btn, self.double_btn, self.split_btn, self.ins_btn]
         btn_row.addStretch(1)
         for b in [self.bet_btn] + self.action_btns + [self.start_btn]:
@@ -3131,7 +3238,7 @@ class RouletteScreen(QWidget):
     def update_state(self, state):
         me = state.get("players", {}).get(self.app.player_id)
         if me:
-            self.balance_lbl.setText(f"Balance: ${int(me['balance'])}")
+            self.balance_lbl.setText(f"{tr('Balance')}: ${int(me['balance'])}")
             self.chipbar.refresh(me["balance"])
 
         res = state.get("last_result")
@@ -3331,7 +3438,7 @@ class SlotsScreen(QWidget):
     def update_state(self, state):
         me = state.get("players", {}).get(self.app.player_id)
         if me:
-            self.balance_lbl.setText(f"Balance: ${int(me['balance'])}")
+            self.balance_lbl.setText(f"{tr('Balance')}: ${int(me['balance'])}")
             self.chipbar.refresh(me["balance"])
         last = state.get("last")
         spinning = any(r.spinning for r in self.reels)
@@ -3518,13 +3625,13 @@ class PokerScreen(QWidget):
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addStretch(1)
-        self.deal_btn = make_button("Deal", "gold", lambda: self._deal())
-        self.fold_btn = make_button("Fold", "crimson", lambda: self._act("fold"))
-        self.check_btn = make_button("Check", "charcoal", lambda: self._act("check"))
-        self.call_btn = make_button("Call", "charcoal", lambda: self._act("call"))
-        self.bet_btn = make_button("Bet", "gold", lambda: self._act("bet"))
-        self.raise_btn = make_button("Raise", "gold", lambda: self._act("raise"))
-        self.draw_btn = make_button("Draw", "gold", lambda: self._draw_cards())
+        self.deal_btn = make_button(tr("Deal"), "gold", lambda: self._deal())
+        self.fold_btn = make_button(tr("Fold"), "crimson", lambda: self._act("fold"))
+        self.check_btn = make_button(tr("Check"), "charcoal", lambda: self._act("check"))
+        self.call_btn = make_button(tr("Call"), "charcoal", lambda: self._act("call"))
+        self.bet_btn = make_button(tr("Place Bet"), "gold", lambda: self._act("bet"))
+        self.raise_btn = make_button(tr("Raise"), "gold", lambda: self._act("raise"))
+        self.draw_btn = make_button(tr("Draw"), "gold", lambda: self._draw_cards())
         self._all_btns = [self.deal_btn, self.fold_btn, self.check_btn, self.call_btn,
                           self.bet_btn, self.raise_btn, self.draw_btn]
         for b in self._all_btns:
@@ -4030,6 +4137,39 @@ class Bridge(QObject):
 
 
 class CasinoApp(QMainWindow):
+    def set_language(self, lang):
+        global CURRENT_LANG
+        CURRENT_LANG = lang
+
+        # Clear the stack entirely
+        while self.stack.count() > 0:
+            widget = self.stack.widget(0)
+            self.stack.removeWidget(widget)
+            widget.deleteLater()
+
+        # Re-initialize all screens to apply translations
+        self.start = StartScreen(self)
+        self.lobby = LobbyScreen(self)
+        self.blackjack = BlackjackScreen(self)
+        self.roulette = RouletteScreen(self)
+        self.slots = SlotsScreen(self)
+        self.poker = PokerScreen(self)
+        self.crash_screen = CrashScreen(self)
+        self.achievements = AchievementsScreen(self)
+        self.stats_screen = StatsScreen(self)
+
+        for w in (self.start, self.lobby, self.blackjack, self.roulette, self.slots, self.poker, self.crash_screen, self.achievements, self.stats_screen):
+            self.stack.addWidget(w)
+
+        # If client is already connected, push it to new screens
+        if self.client:
+            self.client.on_state_update = self.bridge.state.emit
+            self.crash_screen.app = self
+            if getattr(self.client, "room", "lobby") != "lobby":
+                self.client.send_action("join_room", room=self.client.room)
+
+        self.stack.setCurrentWidget(self.start)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("blackjack")
