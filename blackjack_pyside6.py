@@ -1580,7 +1580,11 @@ QPushButton[variant="charcoal"]:pressed { background: #15181E; }
 QPushButton[variant="crimson"]  { background: #8B2500; }
 QPushButton[variant="crimson"]:hover    { background: #A62C00; }
 QPushButton[variant="crimson"]:pressed  { background: #6E1D00; }
-QPushButton:disabled { background:#23262C; color:#5b5f66; }
+QPushButton:disabled {
+    background: rgba(0, 0, 0, 0.4);
+    color: rgba(255, 255, 255, 0.15);
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+}
 
 QScrollArea { border: none; background: transparent; }
 QScrollBar:horizontal { height: 10px; background: transparent; margin: 0; }
@@ -1901,22 +1905,23 @@ class CardWidget(QFrame):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        p.scale(self.width() / 74.0, self.height() / 106.0)
+        rect = QRectF(1, 1, 74 - 2, 106 - 2)
         path = QPainterPath()
         path.addRoundedRect(rect, 11, 11)
 
         if self.hidden or self.card is None:
-            grad = QLinearGradient(0, 0, 0, self.height())
+            grad = QLinearGradient(0, 0, 0, 106)
             grad.setColorAt(0, QColor("#2C4B8F"))
             grad.setColorAt(1, QColor("#0C1A3C"))
             p.fillPath(path, QBrush(grad))
             p.setPen(QPen(QColor(GOLD), 2))
             p.drawPath(path)
             p.setPen(QPen(QColor(255, 255, 255, 40), 1))
-            for i in range(-self.height(), self.width(), 11):
-                p.drawLine(i, 0, i + self.height(), self.height())
+            for i in range(-106, 74, 11):
+                p.drawLine(i, 0, i + 106, 106)
             p.setPen(QPen(QColor(GOLD), 2))
-            p.drawEllipse(QPointF(self.width() / 2, self.height() / 2), 16, 24)
+            p.drawEllipse(QPointF(74 / 2, 106 / 2), 16, 24)
             return
 
         p.fillPath(path, QBrush(QColor("#FCFCF8")))
@@ -1938,7 +1943,7 @@ class CardWidget(QFrame):
         p.drawText(rect, Qt.AlignCenter, suit)
 
         p.save()
-        p.translate(self.width(), self.height())
+        p.translate(74, 106)
         p.rotate(180)
         p.setPen(col)
         p.setFont(rank_font)
@@ -2230,6 +2235,86 @@ class StartScreen(QWidget):
 # CRASH SCREEN
 # ==========================================================================
 
+
+class CrashGraph(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.multiplier = 1.0
+        self.status = "waiting_for_bets"
+
+    def update_state(self, mult, status):
+        self.multiplier = mult
+        self.status = status
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        w, h = self.width(), self.height()
+
+        # Draw background grid
+        p.setPen(QPen(QColor(255, 255, 255, 20), 1))
+        for i in range(1, 5):
+            p.drawLine(0, h * i // 5, w, h * i // 5)
+            p.drawLine(w * i // 5, 0, w * i // 5, h)
+
+        # Draw curve
+        path = QPainterPath()
+        path.moveTo(0, h)
+
+        # Calculate curve endpoint based on multiplier
+        # Max out visually at around 10x for the curve mapping
+        progress = min(1.0, (self.multiplier - 1.0) / 9.0)
+        end_x = w * (0.2 + 0.8 * progress)
+        end_y = h * (1.0 - progress)
+
+        # Control points for a rocket curve
+        ctrl1_x = end_x * 0.5
+        ctrl1_y = h
+        ctrl2_x = end_x * 0.8
+        ctrl2_y = end_y * 1.2
+
+        path.cubicTo(ctrl1_x, ctrl1_y, ctrl2_x, ctrl2_y, end_x, end_y)
+
+        # Fill area under curve
+        fill_path = QPainterPath(path)
+        fill_path.lineTo(end_x, h)
+        fill_path.lineTo(0, h)
+
+        if self.status == "crashed":
+            grad = QLinearGradient(0, 0, 0, h)
+            grad.setColorAt(0, QColor(231, 76, 60, 100))
+            grad.setColorAt(1, QColor(231, 76, 60, 10))
+            p.fillPath(fill_path, QBrush(grad))
+            p.setPen(QPen(QColor("#E74C3C"), 3))
+        else:
+            grad = QLinearGradient(0, 0, 0, h)
+            grad.setColorAt(0, QColor(46, 204, 113, 100))
+            grad.setColorAt(1, QColor(46, 204, 113, 10))
+            p.fillPath(fill_path, QBrush(grad))
+            p.setPen(QPen(QColor("#2ECC71"), 3))
+
+        if self.status != "waiting_for_bets":
+            p.drawPath(path)
+
+            # Draw rocket/dot at end
+            p.setBrush(QColor("#fff"))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(QPointF(end_x, end_y), 5, 5)
+
+        # Draw Multiplier Text
+        p.setPen(QColor("#E74C3C") if self.status == "crashed" else QColor("#2ECC71"))
+        font = QFont("Arial", 48, QFont.Bold)
+        p.setFont(font)
+        text = f"{self.multiplier:.2f}x"
+        if self.status == "waiting_for_bets": text = "1.00x"
+
+        metrics = p.fontMetrics()
+        tx, ty = (w - metrics.horizontalAdvance(text)) / 2, (h + metrics.ascent()) / 2
+        p.drawText(tx, ty, text)
+
+
 class CrashScreen(QWidget):
     def __init__(self, app):
         super().__init__()
@@ -2307,12 +2392,8 @@ class CrashScreen(QWidget):
         center_panel = QFrame()
         center_panel.setObjectName("panel")
         center_layout = QVBoxLayout(center_panel)
-        self.multiplier_lbl = QLabel("1.00x")
-        self.multiplier_lbl.setAlignment(Qt.AlignCenter)
-        self.multiplier_lbl.setStyleSheet("color: #2ECC71; font-size: 72px; font-weight: bold;")
-        center_layout.addStretch()
-        center_layout.addWidget(self.multiplier_lbl)
-        center_layout.addStretch()
+        self.graph = CrashGraph()
+        center_layout.addWidget(self.graph)
         main_layout.addWidget(center_panel, 2)
 
         # Right: History / Bets
@@ -2364,21 +2445,19 @@ class CrashScreen(QWidget):
 
         if status == "waiting_for_bets":
             self.status_lbl.setText("Waiting for bets...")
-            self.multiplier_lbl.setText("1.00x")
-            self.multiplier_lbl.setStyleSheet("color: #2ECC71; font-size: 72px; font-weight: bold;")
+            self.graph.update_state(1.0, "waiting_for_bets")
             self.bet_btn.setEnabled(not my_bet)
             self.cashout_btn.setEnabled(False)
         elif status == "flying":
             self.status_lbl.setText("Flying...")
             mult = state.get("current_multiplier", 1.0)
-            self.multiplier_lbl.setText(f"{mult:.2f}x")
+            self.graph.update_state(mult, "flying")
             self.bet_btn.setEnabled(False)
             self.cashout_btn.setEnabled(bool(my_bet and not my_bet.get("cashed_out")))
         elif status == "crashed":
             self.status_lbl.setText("CRASHED!")
             crash_pt = state.get("crash_point", 1.0)
-            self.multiplier_lbl.setText(f"{crash_pt:.2f}x")
-            self.multiplier_lbl.setStyleSheet("color: #E74C3C; font-size: 72px; font-weight: bold;")
+            self.graph.update_state(crash_pt, "crashed")
             self.bet_btn.setEnabled(False)
             self.cashout_btn.setEnabled(False)
 
@@ -3331,7 +3410,8 @@ class PokerHandCard(CardWidget):
         if self.marked:
             p = QPainter(self)
             p.setRenderHint(QPainter.Antialiasing)
-            rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+            p.scale(self.width() / 74.0, self.height() / 106.0)
+            rect = QRectF(1, 1, 74 - 2, 106 - 2)
             path = QPainterPath()
             path.addRoundedRect(rect, 11, 11)
             p.fillPath(path, QColor(200, 40, 40, 120))
