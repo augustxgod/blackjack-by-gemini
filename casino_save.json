@@ -19,10 +19,10 @@
         "slots_wins": 0,
         "poker_played": 0,
         "poker_wins": 0,
-        "crash_played": 1,
-        "crash_wins": 1,
+        "crash_played": 0,
+        "crash_wins": 0,
         "biggest_win": 0,
-        "total_wagered": 10,
+        "total_wagered": 0,
         "welfare_count": 0
     }
 }
