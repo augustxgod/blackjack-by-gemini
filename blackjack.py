@@ -59,6 +59,7 @@ TRANSLATIONS = {
         "History:": "History:",
         "Current Bets:": "Current Bets:",
         "Back to Lobby": "Back to Lobby",
+        "Back to Menu": "Back to Menu",
         "Bet:": "Bet:"
     },
     "ru": {
@@ -107,6 +108,7 @@ TRANSLATIONS = {
         "History:": "История:",
         "Current Bets:": "Текущие ставки:",
         "Back to Lobby": "В Лобби",
+        "Back to Menu": "В Меню",
         "Bet:": "Ставка:",
         "ACHIEVEMENTS": "ДОСТИЖЕНИЯ",
         "STATISTICS": "СТАТИСТИКА",
@@ -2672,6 +2674,11 @@ class LobbyScreen(QWidget):
         bar.setFixedHeight(64)
         bl = QHBoxLayout(bar)
         bl.setContentsMargins(24, 0, 24, 0)
+
+        back_btn = make_button("‹  " + tr("Back to Menu"), "crimson", self.app.go_to_start)
+        bl.addWidget(back_btn)
+        bl.addSpacing(16)
+
         title = QLabel(tr("LOBBY"))
         title.setObjectName("balance")
         title.setStyleSheet("color:#C9CDD4; font-size:16px; letter-spacing:3px;")
@@ -4340,6 +4347,22 @@ class CasinoApp(QMainWindow):
         if self.client:
             self.client.send_action("leave_room")
         self.stack.setCurrentWidget(self.lobby)
+
+    def go_to_start(self):
+        """Disconnect current session and return to the Start / language-select screen."""
+        if self.client:
+            try:
+                self.client.send_action("leave_room")
+            except Exception:
+                pass
+            self.client = None
+        if self.server:
+            try:
+                self.server.stop()
+            except Exception:
+                pass
+            self.server = None
+        self.stack.setCurrentWidget(self.start)
 
     def send_action(self, action, **kwargs):
         if kwargs.get("amount", 0) >= 10000:
