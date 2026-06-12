@@ -56,10 +56,39 @@ TRANSLATIONS = {
         "Waiting for bets...": "Waiting for bets...",
         "Your Bet: 0": "Your Bet: 0",
         "Won: 0": "Won: 0",
+        "Won:": "Won:",
         "History:": "History:",
         "Current Bets:": "Current Bets:",
         "Back to Lobby": "Back to Lobby",
-        "Bet:": "Bet:"
+        "Bet:": "Bet:",
+        "Waiting for bets...": "Waiting for bets...",
+        "Flying...": "Flying...",
+        "CRASHED!": "CRASHED!",
+        "Balance:": "Balance:",
+        "Total Wagered": "Total Wagered",
+        "Welfare Claims": "Welfare Claims",
+        "Biggest Win": "Biggest Win",
+        "High Card": "High Card",
+        "Pair": "Pair",
+        "Two Pair": "Two Pair",
+        "Three of a Kind": "Three of a Kind",
+        "Straight": "Straight",
+        "Flush": "Flush",
+        "Full House": "Full House",
+        "Four of a Kind": "Four of a Kind",
+        "Straight Flush": "Straight Flush",
+        "Royal Flush": "Royal Flush",
+        "🤖 Advisor: Watching the opponents act...": "🤖 Advisor: Watching the opponents act...",
+        "🤖 Advisor: Strong hand ({})! You should definitely BET.": "🤖 Advisor: Strong hand ({})! You should definitely BET.",
+        "🤖 Advisor: Made a {}. CHECK to see what happens, or place a cautious BET.": "🤖 Advisor: Made a {}. CHECK to see what happens, or place a cautious BET.",
+        "🤖 Advisor: No combination ({}). Declare a safe CHECK.": "🤖 Advisor: No combination ({}). Declare a safe CHECK.",
+        "🤖 Advisor: Great hand ({})! Confidently CALL or RAISE.": "🤖 Advisor: Great hand ({})! Confidently CALL or RAISE.",
+        "🤖 Advisor: Low pair ({}). Worth a CALL to stay in the game.": "🤖 Advisor: Low pair ({}). Worth a CALL to stay in the game.",
+        "🤖 Advisor: Weak hand ({}). Better to FOLD and save your chips.": "🤖 Advisor: Weak hand ({}). Better to FOLD and save your chips.",
+        "🤖 Advisor: Monster made hand ({})! Do NOT discard anything (Stand Pat).": "🤖 Advisor: Monster made hand ({})! Do NOT discard anything (Stand Pat).",
+        "🤖 Advisor: Keep your {} cards! Click on the other trash cards to DISCARD them.": "🤖 Advisor: Keep your {} cards! Click on the other trash cards to DISCARD them.",
+        "🤖 Advisor: No pair. Keep 1 or 2 highest cards (Ace/King), click the rest to DISCARD.": "🤖 Advisor: No pair. Keep 1 or 2 highest cards (Ace/King), click the rest to DISCARD.",
+        "🤖 Advisor: Your current hand valuation is {}.": "🤖 Advisor: Your current hand valuation is {}."
     },
     "ru": {
         "Singleplayer": "Одиночная игра",
@@ -101,10 +130,39 @@ TRANSLATIONS = {
         "Waiting for bets...": "Ожидание ставок...",
         "Your Bet: 0": "Ваша ставка: 0",
         "Won: 0": "Выигрыш: 0",
+        "Won:": "Выигрыш:",
         "History:": "История:",
         "Current Bets:": "Текущие ставки:",
         "Back to Lobby": "В Лобби",
-        "Bet:": "Ставка:"
+        "Bet:": "Ставка:",
+        "Waiting for bets...": "Ожидание ставок...",
+        "Flying...": "В полете...",
+        "CRASHED!": "РАЗБИЛАСЬ!",
+        "Balance:": "Баланс:",
+        "Total Wagered": "Всего поставлено",
+        "Welfare Claims": "Заявки на пособие",
+        "Biggest Win": "Самый крупный выигрыш",
+        "High Card": "Старшая карта",
+        "Pair": "Пара",
+        "Two Pair": "Две пары",
+        "Three of a Kind": "Сет",
+        "Straight": "Стрит",
+        "Flush": "Флеш",
+        "Full House": "Фулл-хаус",
+        "Four of a Kind": "Каре",
+        "Straight Flush": "Стрит-флеш",
+        "Royal Flush": "Флеш-рояль",
+        "🤖 Advisor: Watching the opponents act...": "🤖 Советник: Наблюдаю за ходами оппонентов...",
+        "🤖 Advisor: Strong hand ({})! You should definitely BET.": "🤖 Советник: Сильная рука ({})! Определенно стоит СТАВИТЬ.",
+        "🤖 Advisor: Made a {}. CHECK to see what happens, or place a cautious BET.": "🤖 Советник: Собрано {}. Сделайте ЧЕК или аккуратную СТАВКУ.",
+        "🤖 Advisor: No combination ({}). Declare a safe CHECK.": "🤖 Советник: Нет комбинации ({}). Сделайте безопасный ЧЕК.",
+        "🤖 Advisor: Great hand ({})! Confidently CALL or RAISE.": "🤖 Советник: Отличная рука ({})! Уверенно делайте КОЛЛ или РЕЙЗ.",
+        "🤖 Advisor: Low pair ({}). Worth a CALL to stay in the game.": "🤖 Советник: Младшая пара ({}). Стоит КОЛЛировать, чтобы остаться в игре.",
+        "🤖 Advisor: Weak hand ({}). Better to FOLD and save your chips.": "🤖 Советник: Слабая рука ({}). Лучше сделать ПАС и сохранить фишки.",
+        "🤖 Advisor: Monster made hand ({})! Do NOT discard anything (Stand Pat).": "🤖 Советник: Монстр ({})! НИЧЕГО не сбрасывайте.",
+        "🤖 Advisor: Keep your {} cards! Click on the other trash cards to DISCARD them.": "🤖 Советник: Сохраните {}! Нажмите на остальные карты для сброса.",
+        "🤖 Advisor: No pair. Keep 1 or 2 highest cards (Ace/King), click the rest to DISCARD.": "🤖 Советник: Нет пары. Оставьте Туза или Короля, остальное СБРОСЬТЕ.",
+        "🤖 Advisor: Your current hand valuation is {}.": "🤖 Советник: Текущая ценность руки: {}."
     }
 }
 
@@ -1686,6 +1744,12 @@ QPushButton[variant="charcoal"]:pressed { background: #15181E; }
 QPushButton[variant="crimson"]  { background: #8B2500; }
 QPushButton[variant="crimson"]:hover    { background: #A62C00; }
 QPushButton[variant="crimson"]:pressed  { background: #6E1D00; }
+QPushButton[variant="blue"]             { background: #1E90FF; border: 2px solid #00BFFF; }
+QPushButton[variant="blue"]:hover       { background: #00BFFF; }
+QPushButton[variant="blue"]:pressed     { background: #007ACC; }
+QPushButton[variant="green"]            { background: #2ECC71; border: 2px solid #00FF7F; }
+QPushButton[variant="green"]:hover      { background: #00FF7F; }
+QPushButton[variant="green"]:pressed    { background: #00CC66; }
 QPushButton[variant]:disabled, QPushButton:disabled {
     background: rgba(0, 0, 0, 0.4);
     color: rgba(255, 255, 255, 0.15);
@@ -2288,7 +2352,7 @@ class StartScreen(QWidget):
         brand = QLabel("VIRTUAL CASINO")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
-        sub = QLabel("BLACKJACK   •   ROULETTE")
+        sub = QLabel(tr("BLACKJACK") + "   •   " + tr("ROULETTE"))
         sub.setObjectName("subtitle")
         sub.setAlignment(Qt.AlignCenter)
         v.addWidget(brand)
@@ -2311,16 +2375,8 @@ class StartScreen(QWidget):
         v.addWidget(make_button(tr("Join Game"), "charcoal", self._join, big=True))
 
         lang_layout = QHBoxLayout()
-        en_btn = QPushButton("🇬🇧 EN")
-        en_btn.setFixedSize(60, 30)
-        en_btn.setStyleSheet("color: white; background: #222; border-radius: 5px;")
-        en_btn.clicked.connect(lambda: self.app.set_language("en"))
-
-        ru_btn = QPushButton("🇷🇺 RU")
-        ru_btn.setFixedSize(60, 30)
-        ru_btn.setStyleSheet("color: white; background: #222; border-radius: 5px;")
-        ru_btn.clicked.connect(lambda: self.app.set_language("ru"))
-
+        en_btn = make_button("🇬🇧 EN", "charcoal", lambda: self.app.set_language("en"))
+        ru_btn = make_button("🇷🇺 RU", "charcoal", lambda: self.app.set_language("ru"))
         lang_layout.addWidget(en_btn)
         lang_layout.addWidget(ru_btn)
         v.addLayout(lang_layout)
@@ -2472,13 +2528,8 @@ class CrashScreen(QWidget):
         self.chipbar = ChipBar(self.app)
 
         bet_layout = QHBoxLayout()
-        self.bet_btn = QPushButton(tr("Place Bet"))
-        self.bet_btn.setStyleSheet("background: #1E90FF; color: #fff; font-weight: bold; font-size: 16px; border-radius: 8px; padding: 12px; border: 2px solid #00BFFF;")
-        self.bet_btn.clicked.connect(self.on_bet)
-
-        self.cashout_btn = QPushButton(tr("CASH OUT"))
-        self.cashout_btn.setStyleSheet("background: #2ECC71; color: #fff; font-weight: bold; font-size: 16px; border-radius: 8px; padding: 12px; border: 2px solid #00FF7F;")
-        self.cashout_btn.clicked.connect(self.on_cashout)
+        self.bet_btn = make_button(tr("Place Bet"), "blue", self.on_bet, big=True)
+        self.cashout_btn = make_button(tr("CASH OUT"), "green", self.on_cashout, big=True)
         self.cashout_btn.setEnabled(False)
 
         bet_layout.addWidget(self.bet_btn)
@@ -2551,28 +2602,28 @@ class CrashScreen(QWidget):
             self.chipbar.refresh(me["balance"])
 
         if status == "waiting_for_bets":
-            self.status_lbl.setText("Waiting for bets...")
+            self.status_lbl.setText(tr("Waiting for bets..."))
             self.graph.update_state(1.0, "waiting_for_bets")
             self.bet_btn.setEnabled(not my_bet)
             self.cashout_btn.setEnabled(False)
         elif status == "flying":
-            self.status_lbl.setText("Flying...")
+            self.status_lbl.setText(tr("Flying..."))
             mult = state.get("current_multiplier", 1.0)
             self.graph.update_state(mult, "flying")
             self.bet_btn.setEnabled(False)
             self.cashout_btn.setEnabled(bool(my_bet and not my_bet.get("cashed_out")))
         elif status == "crashed":
-            self.status_lbl.setText("CRASHED!")
+            self.status_lbl.setText(tr("CRASHED!"))
             crash_pt = state.get("crash_point", 1.0)
             self.graph.update_state(crash_pt, "crashed")
             self.bet_btn.setEnabled(False)
             self.cashout_btn.setEnabled(False)
 
         if my_bet:
-            self.my_bet_lbl.setText(f"Your Bet: {my_bet['amount']}")
+            self.my_bet_lbl.setText(f"{tr('Bet:')} {my_bet['amount']}")
             if my_bet["cashed_out"]:
                 won = my_bet["won"]
-                self.my_win_lbl.setText(f"Won: {won}")
+                self.my_win_lbl.setText(f"{tr('Won:')} {won}")
                 self.my_win_lbl.setStyleSheet("color: #2ECC71;")
 
                 # Check for biggest win safely by tracking if we already recorded this round
@@ -2583,11 +2634,11 @@ class CrashScreen(QWidget):
                     self._recorded_win = True
             else:
                 self._recorded_win = False
-                self.my_win_lbl.setText("Won: 0")
+                self.my_win_lbl.setText(f"{tr('Won:')} 0")
                 self.my_win_lbl.setStyleSheet("color: #fff;")
         else:
-            self.my_bet_lbl.setText("Your Bet: 0")
-            self.my_win_lbl.setText("Won: 0")
+            self.my_bet_lbl.setText(f"{tr('Bet:')} 0")
+            self.my_win_lbl.setText(f"{tr('Won:')} 0")
 
         history = state.get("history", [])
         self.history_lbl.setText("  ".join([f"{x}x" for x in history]))
@@ -2647,15 +2698,15 @@ class LobbyScreen(QWidget):
 
         games = QGridLayout()
         games.setSpacing(24)
-        games.addWidget(ClickableTile("BLACKJACK", "Beat the dealer to 21",
+        games.addWidget(ClickableTile(tr("BLACKJACK"), tr("Beat the dealer to 21"),
                                       "#0B6E4F", "#12936A", "#16B07F", self.app.join_blackjack), 0, 0)
-        games.addWidget(ClickableTile("ROULETTE", "Spin the wheel of fortune",
+        games.addWidget(ClickableTile(tr("ROULETTE"), tr("Spin the wheel of fortune"),
                                       "#7A1220", "#9C1A2C", "#C02236", self.app.join_roulette), 0, 1)
-        games.addWidget(ClickableTile("SLOTS", "Match three to win big",
+        games.addWidget(ClickableTile(tr("SLOTS"), tr("Match three to win big"),
                                       "#7A5A12", "#A07A1E", "#C99A2C", self.app.join_slots), 1, 0)
-        games.addWidget(ClickableTile("POKER", "Five-card draw vs bots",
+        games.addWidget(ClickableTile(tr("POKER"), tr("Five-card draw vs bots"),
                                       "#3A2A6E", "#4E3A93", "#6A52C0", self.app.join_poker), 1, 1)
-        games.addWidget(ClickableTile("CRASH", "Predict the rocket multiplier",
+        games.addWidget(ClickableTile(tr("CRASH"), tr("Predict the rocket multiplier"),
                                       "#0B3D91", "#1E62C4", "#2A7EE0", self.app.join_crash), 2, 0)
         gw = QWidget()
         gw.setLayout(games)
@@ -3781,36 +3832,36 @@ class PokerScreen(QWidget):
         if me["hand"]:
             rank_tuple = poker_hand_rank(me["hand"])
             cat = rank_tuple[0]
-            hand_name = poker_rank_name(rank_tuple)
+            hand_name = tr(poker_rank_name(rank_tuple))
             owe = state.get("owe", 0)
 
             advice_text = ""
             if awaiting == "human":
                 if owe == 0:
                     if cat >= 3:
-                        advice_text = f"🤖 Advisor: Strong hand ({hand_name})! You should definitely BET."
+                        advice_text = tr("🤖 Advisor: Strong hand ({})! You should definitely BET.").format(hand_name)
                     elif cat >= 1:
-                        advice_text = f"🤖 Advisor: Made a {hand_name}. CHECK to see what happens, or place a cautious BET."
+                        advice_text = tr("🤖 Advisor: Made a {}. CHECK to see what happens, or place a cautious BET.").format(hand_name)
                     else:
-                        advice_text = f"🤖 Advisor: No combination ({hand_name}). Declare a safe CHECK."
+                        advice_text = tr("🤖 Advisor: No combination ({}). Declare a safe CHECK.").format(hand_name)
                 else:
                     if cat >= 3:
-                        advice_text = f"🤖 Advisor: Great hand ({hand_name})! Confidently CALL or RAISE."
+                        advice_text = tr("🤖 Advisor: Great hand ({})! Confidently CALL or RAISE.").format(hand_name)
                     elif cat >= 1:
-                        advice_text = f"🤖 Advisor: Low pair ({hand_name}). Worth a CALL to stay in the game."
+                        advice_text = tr("🤖 Advisor: Low pair ({}). Worth a CALL to stay in the game.").format(hand_name)
                     else:
-                        advice_text = f"🤖 Advisor: Weak hand ({hand_name}). Better to FOLD and save your chips."
+                        advice_text = tr("🤖 Advisor: Weak hand ({}). Better to FOLD and save your chips.").format(hand_name)
             elif awaiting == "draw_human":
                 if cat >= 4:
-                    advice_text = f"🤖 Advisor: Monster made hand ({hand_name})! Do NOT discard anything (Stand Pat)."
+                    advice_text = tr("🤖 Advisor: Monster made hand ({})! Do NOT discard anything (Stand Pat).").format(hand_name)
                 elif cat >= 1:
-                    advice_text = f"🤖 Advisor: Keep your {hand_name} cards! Click on the other trash cards to DISCARD them."
+                    advice_text = tr("🤖 Advisor: Keep your {} cards! Click on the other trash cards to DISCARD them.").format(hand_name)
                 else:
-                    advice_text = f"🤖 Advisor: No pair. Keep 1 or 2 highest cards (Ace/King), click the rest to DISCARD."
+                    advice_text = tr("🤖 Advisor: No pair. Keep 1 or 2 highest cards (Ace/King), click the rest to DISCARD.")
             elif awaiting == "bot":
-                advice_text = "🤖 Advisor: Watching the opponents act..."
+                advice_text = tr("🤖 Advisor: Watching the opponents act...")
             else:
-                advice_text = f"🤖 Advisor: Your current hand valuation is {hand_name}."
+                advice_text = tr("🤖 Advisor: Your current hand valuation is {}.").format(hand_name)
 
             self.advisor_lbl.setText(advice_text)
         else:
@@ -4120,15 +4171,15 @@ class StatsScreen(QWidget):
 
         s = self.app.profile.stats
 
-        self.gen_grid.addWidget(self._make_stat_card("Total Wagered", f"${int(s['total_wagered'])}"), 0, 0)
-        self.gen_grid.addWidget(self._make_stat_card("Biggest Win", f"${int(s['biggest_win'])}"), 0, 1)
-        self.gen_grid.addWidget(self._make_stat_card("Welfare Claims", str(s['welfare_count'])), 0, 2)
+        self.gen_grid.addWidget(self._make_stat_card(tr("Total Wagered"), f"${int(s['total_wagered'])}"), 0, 0)
+        self.gen_grid.addWidget(self._make_stat_card(tr("Biggest Win"), f"${int(s['biggest_win'])}"), 0, 1)
+        self.gen_grid.addWidget(self._make_stat_card(tr("Welfare Claims"), str(s['welfare_count'])), 0, 2)
 
-        self.break_grid.addWidget(self._make_game_row("BLACKJACK", s["bj_played"], s["bj_wins"]), 0, 0)
-        self.break_grid.addWidget(self._make_game_row("ROULETTE", s["roulette_played"], s["roulette_wins"]), 1, 0)
-        self.break_grid.addWidget(self._make_game_row("SLOTS", s["slots_played"], s["slots_wins"]), 2, 0)
-        self.break_grid.addWidget(self._make_game_row("POKER", s["poker_played"], s["poker_wins"]), 3, 0)
-        self.break_grid.addWidget(self._make_game_row("CRASH", s.get("crash_played", 0), s.get("crash_wins", 0)), 4, 0)
+        self.break_grid.addWidget(self._make_game_row(tr("BLACKJACK"), s["bj_played"], s["bj_wins"]), 0, 0)
+        self.break_grid.addWidget(self._make_game_row(tr("ROULETTE"), s["roulette_played"], s["roulette_wins"]), 1, 0)
+        self.break_grid.addWidget(self._make_game_row(tr("SLOTS"), s["slots_played"], s["slots_wins"]), 2, 0)
+        self.break_grid.addWidget(self._make_game_row(tr("POKER"), s["poker_played"], s["poker_wins"]), 3, 0)
+        self.break_grid.addWidget(self._make_game_row(tr("CRASH"), s.get("crash_played", 0), s.get("crash_wins", 0)), 4, 0)
 
 class Bridge(QObject):
 
