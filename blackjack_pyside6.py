@@ -61,6 +61,7 @@ TRANSLATIONS = {
         "Current Bets:": "Current Bets:",
         "Back to Lobby": "Back to Lobby",
         "Bet:": "Bet:",
+        "Back": "Back",
         "Waiting for bets...": "Waiting for bets...",
         "Flying...": "Flying...",
         "CRASHED!": "CRASHED!",
@@ -135,6 +136,7 @@ TRANSLATIONS = {
         "Current Bets:": "Текущие ставки:",
         "Back to Lobby": "В Лобби",
         "Bet:": "Ставка:",
+        "Back": "Назад",
         "Waiting for bets...": "Ожидание ставок...",
         "Flying...": "В полете...",
         "CRASHED!": "РАЗБИЛАСЬ!",
@@ -2677,9 +2679,12 @@ class LobbyScreen(QWidget):
         bar.setFixedHeight(64)
         bl = QHBoxLayout(bar)
         bl.setContentsMargins(24, 0, 24, 0)
+        back_btn = make_button("‹  " + tr("Back"), "charcoal", lambda: self.app.back_to_start())
+        bl.addWidget(back_btn)
+
         title = QLabel("LOBBY")
         title.setObjectName("balance")
-        title.setStyleSheet("color:#C9CDD4; font-size:16px; letter-spacing:3px;")
+        title.setStyleSheet("color:#C9CDD4; font-size:16px; letter-spacing:3px; margin-left: 10px;")
         self.balance_lbl = QLabel("Balance: —")
         self.balance_lbl.setObjectName("balance")
         bl.addWidget(title)
@@ -4328,6 +4333,18 @@ class CasinoApp(QMainWindow):
             return
         self.client.send_action("join_room", room="slots")
         self.stack.setCurrentWidget(self.slots)
+
+    def back_to_start(self):
+        if self.client:
+            sock = getattr(self.client, "socket", None)
+            if sock:
+                sock.close()
+            self.client = None
+        if self.server:
+            if hasattr(self.server, "server"):
+                self.server.server.close()
+            self.server = None
+        self.stack.setCurrentWidget(self.start)
 
     def join_poker(self):
         if not self.client:
