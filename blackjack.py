@@ -1608,7 +1608,17 @@ class LocalClient:
 
 class ProfileManager:
     def __init__(self, filepath="casino_save.json"):
-        self.filepath = filepath
+        import os, platform
+        system = platform.system()
+        if system == "Windows":
+            base_dir = os.environ.get("APPDATA", os.path.expanduser("~"))
+        elif system == "Darwin":
+            base_dir = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+        else:  # Linux and other Unix-like systems
+            base_dir = os.path.join(os.path.expanduser("~"), ".local", "share")
+        app_dir = os.path.join(base_dir, "VirtualCasino")
+        os.makedirs(app_dir, exist_ok=True)
+        self.filepath = os.path.join(app_dir, filepath)
         self.name = "Player"
         self.balance = 1000
         self.welfare_claimed = False
